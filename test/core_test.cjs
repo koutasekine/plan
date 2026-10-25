@@ -612,6 +612,9 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
   const gz = P.render(z, 'gantt', { today: '2026-04-24' }).svg;
   ok(gOf(gz, task(z, 'a'))[0].includes('>遅れ<') && gOf(gz, task(z, 'b'))[0].includes('>遅れ<') && !gOf(gz, task(z, 'c'))[0].includes('>遅れ<'), `日数 0 の作業の遅れ: d1=${task(z, 'b').d1}`);
   ok(/>今日<\/text>/.test(P.render(z, 'gantt', { today: '2026-04-23' }).svg), '開始日に今日の線がない');
+  // 最後の列の翌日には線を引かない(列がないため)。最後の列の日には引く
+  const z3 = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: X\n- a by: A days: 3\n');
+  ok(/>今日</.test(P.render(z3, 'gantt', { today: '2026-04-25' }).svg) && !/>今日</.test(P.render(z3, 'gantt', { today: '2026-04-26' }).svg), '今日の線の終わりの境目');
   const d = P.describe(r, late[0].id, { today });
   ok(d.items.some(([k, v]) => k === '状態' && v.endsWith('、遅れ')), '選んだ要素の欄に遅れが出ない');
   ok(P.describe(r, r.tasks[0].id).items.some(([k, v]) => k === '状態' && v === '完了(done)'), '選んだ要素の欄の状態');
@@ -643,6 +646,109 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
   ok(!!E.rename(r, id('a'), 'x status: y').error && !!E.setAttr(r, id('a'), 'note', 'x status: y').error, '「空白 + status:」を名前・値に書けた');
   for (const x of [x1, x2, x3]) { const r2 = P.analyze(x.text); ok(r2.ok && !r2.diags.length, '状態の書き換えの後に診断が出た'); }
   ok(task(P.analyze(x1.text), 'a').status === 'blocked', '書き足した状態が読めない');
+}
+// ---- チェック済みの MOP(mop*:)とテスト項目の表(仕様書 3.6 節・7.6 節・11.2 節)
+const W_ = 'WBS: W\n- t by: A days: 1\n';
+{
+  const r = run('FBS: F\n- a mop: x mop*: y note: n mop: z\n- b mop*: w\n' + W_);
+  const a = r.bySec.FBS.find((n) => n.name === 'a');
+  ok(r.ok && !r.diags.length, `mop*: の例に診断: ${r.diags.map((d) => d.message)}`);
+  ok(a.mops.join('|') === 'x|y|z' && a.mopChecked.join('|') === 'false|true|false', 'mop*: の読み取り');
+  hasErr('FBS: F\n- a mop: x\nPBS: P\n- p mop*: y\n' + W_, /「mop\*:」は PBS: の要素には書けません/);
+  hasErr('FBS: F\n- a mop*:\n' + W_, /「mop\*:」の後ろに値がありません/);
+  // C3: mop*: も MOP として数える
+  const c = run('FBS: F\n- a mop*: x\n- b\n' + W_);
+  ok(warns(c).filter((d) => d.cat === '検査 C3').map((d) => d.message).join() === 'FBS の「b」に MOP(mop: か mop*:)がありません', 'mop*: だけのときの C3');
+  ok(P.render(r, 'fbs').svg.includes('>✓ MOP: y<') && P.render(r, 'fbs').svg.includes('>MOP: x<'), 'FBS の木でチェック済みの印');
+  ok(P.describe(r, a.id).items.some(([k, v]) => k === 'MOP' && v === 'x / ✓ y / z'), '選んだ要素の欄の MOP');
+}
+// 表のビュー
+{
+  const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
+  const r = P.analyze(t);
+  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match mop wbs aoa roles gantt', 'ビューの並び');
+  const g = P.render(r, 'mop').svg;
+  const boxes = [...g.matchAll(/data-mop="(n\d+)\|(\d+)" data-checked="([01])"/g)];
+  const all = r.bySec.FBS.flatMap((n) => n.mops.map((m, i) => `${n.id}|${i}|${n.mopChecked[i] ? 1 : 0}`));
+  ok(boxes.map((m) => `${m[1]}|${m[2]}|${m[3]}`).join(' ') === all.join(' '), '済の欄が MOP と 1 対 1 でない');
+  ok(g.includes(`チェック済み ${all.filter((x) => x.endsWith('|1')).length} / ${all.length} 件`), '件数の表示');
+  ok(g.includes('>実現する PBS の要素<') && g.includes('>通知API<'), 'PBS の列');
+  const odd = 'start: 2026-04-23\nmembers:\n- A\nFBS: 根 mop: R\n- 機能1 mop*: M\n  - 葉a mop: a1 mop*: a2\n  - 葉b\n  - 中間2\n    - 葉c mop: c\n- 葉d\nWBS: W\n- t by: A days: 1\n';
+  const o = P.analyze(odd), go = P.render(o, 'mop').svg;
+  ok(!go.includes('実現する PBS の要素'), 'PBS がないのに PBS の列を出した');
+  ok((go.match(/>\(MOP なし\)</g) ?? []).length === 2, '(MOP なし)の行の数');
+  ok(go.includes('>「根」全体<') && go.includes('>「機能1」全体<'), '途中の要素と根の MOP の行');
+  ok((go.match(/data-mop=/g) ?? []).length === 5 && go.includes('チェック済み 2 / 5 件'), '途中の要素と根の MOP の済の欄');
+  ok((go.match(/stroke-dasharray="5 3"/g) ?? []).length === 4, 'C3 の警告の枠(葉b と葉d の、機能と MOP の欄)');
+  const n0 = run('FBS: F\n' + W_);
+  ok(/FBS に要素がありません/.test(P.render(n0, 'mop').svg), '要素がない FBS');
+  ok(P.render(run('WBS: X\n- a by: A days: 1\n'), 'mop').svg === null, 'FBS がないのに描いた');
+}
+// 図からの編集: チェックの切り替え
+{
+  const E = P.Edit;
+  const base = 'start: 2026-04-23\nmembers:\n- A\nFBS: F\n- a mop: x note: n mop*: y // 注\n- b mop: w\n' + W_;
+  const r = P.analyze(base);
+  const a = r.bySec.FBS.find((n) => n.name === 'a').id;
+  const x1 = E.setMopChecked(r, a, 0, true);
+  ok(!x1.error && x1.text === base.replace('mop: x', 'mop*: x'), `チェックを付ける: ${JSON.stringify(x1)}`);
+  const x2 = E.setMopChecked(r, a, 1, false);
+  ok(!x2.error && x2.text === base.replace('mop*: y', 'mop: y'), 'チェックを外す');
+  ok(E.setMopChecked(r, a, 1, true).text === base, '同じ状態にしても書き換えない');
+  ok(!!E.setMopChecked(r, a, 2, true).error, 'ない MOP の番号');
+  for (const x of [x1, x2]) { const r2 = P.analyze(x.text); ok(r2.ok && !r2.diags.length, 'チェックの切り替えの後に診断'); }
+  // MOP の欄の書き換え: 同じ文はチェックを保つ
+  const set = (list) => E.setAttr(r, a, 'mop', list);
+  ok(set(['x', 'y']).text === base, '変えないときは書き換えない');
+  ok(set(['y']).text === base.replace('mop: x ', ''), '前の MOP を消すと、残る MOP のチェックはそのまま');
+  ok(set(['x']).text === base.replace(' mop*: y', ''), '後ろの MOP を消す');
+  ok(set(['x', 'k', 'y']).text === base.replace('mop: x', 'mop: x mop: k'), `間に足す: ${set(['x', 'k', 'y']).text}`);
+  ok(set(['k', 'x', 'y']).text === base.replace('mop: x', 'mop: k mop: x'), '前に足す');
+  ok(set(['x', 'y2']).text === base.replace('mop*: y', 'mop*: y2'), '文を直しても、チェックはそのまま');
+  ok(set(['x', 'y', 'k']).text === base.replace('mop*: y', 'mop*: y mop: k'), '後ろに足す');
+  { const a2 = P.analyze(set(['y', 'x']).text).bySec.FBS.find((n) => n.name === 'a'); ok(a2.mops.join() === 'y,x' && a2.mopChecked.join() === 'true,false', `並べ替えてもチェックを引き継ぐ: ${set(['y', 'x']).text}`); }
+  const dup = P.analyze(base.replace('mop: x note: n mop*: y', 'mop: y note: n mop*: y'));
+  const xd = E.setAttr(dup, dup.bySec.FBS.find((n) => n.name === 'a').id, 'mop', ['y']);
+  ok(P.analyze(xd.text).bySec.FBS.find((n) => n.name === 'a').mopChecked.join() === 'true', `同じ文の 2 つを 1 つにすると、チェック済みが残る: ${xd.text}`);
+  const r0 = P.analyze('start: 2026-04-23\nmembers:\n- A\nFBS: F\n- a note: n // 注\n' + W_);
+  ok(E.setAttr(r0, r0.bySec.FBS[1].id, 'mop', ['p', 'q']).text === 'start: 2026-04-23\nmembers:\n- A\nFBS: F\n- a note: n mop: p mop: q // 注\n' + W_, 'MOP のない要素に足す');
+}
+// MOP の欄の書き換えの機械検査: 並びは書いたとおり。消すだけ・足すだけのときは、残る MOP のチェックが変わらず、足した MOP は未チェック
+{
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (n) => Math.floor(rnd() * n);
+  const E = P.Edit;
+  let tries = 0, wrote = 0;
+  for (let it = 0; it < 600; it++) {
+    const k = pick(5), olds = [];
+    for (let i = 0; i < k; i++) olds.push({ t: `m${pick(4)}`, c: rnd() < 0.5 });
+    const others = ['', ' note: n', ' // 注'];
+    let line = '- a';
+    olds.forEach((o, i) => { line += ` ${o.c ? 'mop*' : 'mop'}: ${o.t}`; if (i === 0 && rnd() < 0.3) line += ' note: z'; });
+    line += others[pick(3)];
+    const text = `start: 2026-04-23\nmembers:\n- A\nFBS: F\n${line}\n- b mop: w\n${W_}`;
+    const r = P.analyze(text);
+    if (!r.ok) continue;
+    const id = r.bySec.FBS.find((n) => n.name === 'a').id;
+    const kind = pick(4);
+    let list = olds.map((o) => o.t), keep = null;
+    if (kind === 0 && list.length) { const drop = new Set(); for (let i = 0; i < list.length; i++) if (rnd() < 0.4) drop.add(i); keep = olds.filter((o, i) => !drop.has(i)); list = keep.map((o) => o.t); }
+    else if (kind === 1) { const out = []; keep = []; for (const o of [...olds, null]) { if (rnd() < 0.4) { const t = `n${pick(9)}`; out.push(t); keep.push({ t, c: false }); } if (o) { out.push(o.t); keep.push(o); } } list = out; }
+    else if (kind === 2 && list.length) { keep = [...olds]; for (let i = keep.length - 1; i > 0; i--) { const j = pick(i + 1); [keep[i], keep[j]] = [keep[j], keep[i]]; } list = keep.map((o) => o.t); }
+    else { list = Array.from({ length: pick(5) }, () => `m${pick(6)}`); }
+    tries++;
+    const x = E.setAttr(r, id, 'mop', list);
+    if (x.error) { ok(false, `書き換えを拒んだ: ${x.error} ${line} → ${list}`); continue; }
+    wrote++;
+    const r2 = P.analyze(x.text);
+    const a2 = r2.bySec.FBS.find((n) => n.name === 'a');
+    ok(r2.ok && a2.mops.join('|') === list.join('|'), `並びが違う: ${line} → ${list} → ${x.text.split('\n')[4]}`);
+    // 同じ文が 2 つ以上あるときは、どちらを残したかを区別できないので、チェックは比べない
+    if (keep && a2 && new Set(olds.map((o) => o.t)).size === olds.length) ok(a2.mopChecked.join('|') === keep.map((o) => o.c).join('|'), `チェックが変わった: ${line} → ${x.text.split('\n')[4]}`);
+    ok(x.text.split('\n')[5] === '- b mop: w', 'ほかの行が変わった');
+  }
+  console.log(`MOP の欄の書き換え: 試行 ${tries}、書き込み ${wrote}`);
 }
 // ---- SVG の埋め込みと取り出し
 {

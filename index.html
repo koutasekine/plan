@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  プロジェクト計画 — FBS・PBS・WBS・役割分担・アローダイアグラム(クリティカルパス)・ガントチャートを 1 つのテキストから作る単一 HTML ツール
+  プロジェクト計画 — FBS・PBS・WBS・テスト項目(MOP)・役割分担・アローダイアグラム(クリティカルパス)・ガントチャートを 1 つのテキストから作る単一 HTML ツール
   https://plan.sapp.jp
 
   MIT License
@@ -80,6 +80,7 @@ textarea#src::selection{background:rgba(139,26,43,.25);color:transparent}
 #edit .editerr{color:var(--err);margin-bottom:6px}
 #view [data-handle]{cursor:ew-resize}
 #view [data-rel]{cursor:pointer}
+#view [data-mop]{cursor:pointer}
 #edit .kind{font-weight:600}
 #edit .q{font:13px Consolas,"Courier New",monospace;color:#555}
 #edit .note{background:var(--sel);padding:1px 6px;border-radius:3px}
@@ -127,7 +128,7 @@ footer a{color:#777}
     <div id="edit"></div>
   </div>
 </main>
-<footer>プロジェクト計画 — FBS・PBS・WBS から、役割分担・アローダイアグラム(クリティカルパス)・ガントチャートを作ります。単一 HTML、データはどこにも送信されません。MIT License, Copyright (c) 2026 Kouta Sekine. <a href="https://sapp.jp" target="_blank" rel="noopener">S Apps</a></footer>
+<footer>プロジェクト計画 — FBS・PBS・WBS から、テスト項目(MOP)の表・役割分担・アローダイアグラム(クリティカルパス)・ガントチャートを作ります。単一 HTML、データはどこにも送信されません。MIT License, Copyright (c) 2026 Kouta Sekine. <a href="https://sapp.jp" target="_blank" rel="noopener">S Apps</a></footer>
 
 <dialog id="dlgHelp"></dialog>
 <script>
@@ -139,7 +140,7 @@ const Plan = (() => {
 const SECTIONS = ['start', 'end', 'off', 'members', 'FBS', 'PBS', 'WBS'];
 const ALLOWED = {
   members: ['off', 'note'],
-  FBS: ['mop', 'note'],
+  FBS: ['mop', 'mop*', 'note'],
   PBS: ['realizes', 'note'],
   WBS: ['for', 'days', 'by', 'review', 'after', 'status', 'note'],
 };
@@ -311,12 +312,12 @@ function parse(text0) {
     const n = {
       id: `n${nodes.length}`, sec: key, name: pa.name.text, parent, children: [], depth: parent ? parent.depth + 1 : 0,
       line: ln, start: ls, end: ls + s.length, nameStart: ls + pa.name.a, nameEnd: ls + pa.name.b,
-      attrs: {}, mops: [], note: null, order: nodes.length,
+      attrs: {}, mops: [], mopChecked: [], note: null, order: nodes.length,
       // 図からの編集で使う: 行の始まりと終わり(注を含む)、字下げの文字列、属性の並び(位置つき)
       lineStart: ls, lineEnd: ls + lines[ln - 1].length, lead: parent ? /^[ \t]*/.exec(s)[0] : '', attrList: pa.attrs,
     };
     for (const at of pa.attrs) {
-      if (at.key === 'mop') n.mops.push(at.text);
+      if (at.key === 'mop' || at.key === 'mop*') { n.mops.push(at.text); n.mopChecked.push(at.key === 'mop*'); }
       else if (at.key === 'note') n.note = at.text;
       else n.attrs[at.key] = at;
     }
@@ -327,7 +328,7 @@ function parse(text0) {
 
   // 名前と属性に分ける(仕様書 3.5・3.6 節)。エラーなら null
   function parseAttrs(s, from, ln, ls, key) {
-    const re = /(^|[ \t])(realizes|for|days|by|review|after|status|note|mop|off):/g;
+    const re = /(^|[ \t])(realizes|for|days|by|review|after|status|note|mop\*?|off):/g;
     re.lastIndex = from;
     const hits = [];
     let m;
@@ -355,7 +356,7 @@ function parse(text0) {
         E(x.ks, kend, `「${x.key}:」は ${key}: の${key === 'members' ? '担当者' : '要素'}には書けません(書けるもの: ${(allowed ?? []).map((k) => `${k}:`).join(' ')})`);
         continue;
       }
-      if (x.key !== 'mop' && seen.has(x.key)) { E(x.ks, kend, `「${x.key}:」が同じ行に 2 回あります`); continue; }
+      if (x.key !== 'mop' && x.key !== 'mop*' && seen.has(x.key)) { E(x.ks, kend, `「${x.key}:」が同じ行に 2 回あります`); continue; }
       seen.add(x.key);
       if (/\*\*|__/.test(v.text)) { E(v.a, Math.max(v.b, v.a + 1), '太字(** や __)は使えません'); continue; }
       if (!v.text) { E(x.ks, kend, `「${x.key}:」の後ろに値がありません`); continue; }
@@ -568,7 +569,7 @@ function analyze(text) {
     leafCheck(bySec.PBS, (n) => (n.R.realizes ?? []).length > 0, 'C2', (n) => `PBS の「${n.name}」が FBS のどの要素も実現していません(realizes: がありません)`);
   }
   if (sec.FBS && bySec.FBS.some((n) => n.mops.length)) {
-    leafCheck(bySec.FBS, (n) => n.mops.length > 0, 'C3', (n) => `FBS の「${n.name}」に MOP(mop:)がありません`);
+    leafCheck(bySec.FBS, (n) => n.mops.length > 0, 'C3', (n) => `FBS の「${n.name}」に MOP(mop: か mop*:)がありません`);
   }
   if (sec.PBS) leafCheck(bySec.PBS, (n) => tasksFor.has(n), 'C4', (n) => `PBS の「${n.name}」のための作業がありません(WBS の作業に for: で書きます)`);
   for (const t of tasks) if (!t.by.length) C('C5', t, `作業「${t.name}」に担当者(by:)がいません`);
@@ -705,7 +706,7 @@ function renderTree(r, key) {
     const head = key === 'WBS' && n.num ? `${n.num} ` : '';
     const lines = wrap(head + n.name, MAXW - 2 * PADX, FS);
     const sub = [];
-    if (key === 'FBS') for (const m of n.mops) sub.push(...wrap(`MOP: ${m}`, MAXW - 2 * PADX, SFS));
+    if (key === 'FBS') n.mops.forEach((m, i) => sub.push(...wrap(`${n.mopChecked[i] ? '✓ ' : ''}MOP: ${m}`, MAXW - 2 * PADX, SFS)));
     if (key === 'WBS' && n.parent && !n.children.length) {
       const bits = [`${fmtDays(n.days)} 日`];
       if (n.by.length) bits.push(`作成 ${who(r, n.by)}`);
@@ -1036,6 +1037,93 @@ function headerCells(L, x0, y0, h, extra) {
   return { svg: out.join(''), x };
 }
 
+// ---- テスト項目(MOP)の表(仕様書 7.6 節)
+// 左は FBS の階層(途中の要素は下の行をまとめたセル)。MOP 1 つにつき 1 行。MOP のない末端の要素は「(MOP なし)」の 1 行。
+// 途中の要素や根に書いた MOP は、その要素の「全体」の行にする
+function renderMop(r) {
+  const root = r.sec.FBS.root, F = r.bySec.FBS;
+  const M = 20, TOP = 50, FS = 12, LH = FS * 1.35, PAD = 5, MINH = 22;
+  const warned = new Set(r.checks.filter((c) => c.code === 'C3').map((c) => c.node));
+  const hasP = !!r.sec.PBS;
+  const realizedBy = new Map();
+  if (hasP) for (const p of r.bySec.PBS) for (const f of p.R.realizes ?? []) { if (!realizedBy.has(f)) realizedBy.set(f, []); realizedBy.get(f).push(p); }
+  const rows = [], own = new Map(), span = new Map();
+  const walk = (n) => {
+    const r0 = rows.length;
+    n.mops.forEach((m, i) => rows.push({ n, i }));
+    if (n.parent && !n.children.length && !n.mops.length) rows.push({ n, i: -1 });
+    if (rows.length > r0) own.set(n, [r0, rows.length - 1]);
+    n.children.forEach(walk);
+    if (rows.length > r0) span.set(n, [r0, rows.length - 1]);
+  };
+  walk(root);
+  const title = T_(M, 24, `テスト項目(MOP)(FBS: ${root.name})`, { fs: 13, weight: '600' });
+  if (!rows.length) return wrapSvg(420, 80, title + T_(M, 50, 'FBS に要素がありません', { fs: 12 }));
+  const LV = Math.max(0, ...F.filter((n) => n.parent && n.children.length).map((n) => n.depth));
+  const label = (n) => (n.children.length || !n.parent ? `「${n.name}」全体` : n.name);
+  const colW = [];
+  for (let k = 1; k <= LV; k++) colW.push(Math.min(170, Math.max(70, ...F.filter((n) => n.depth === k && n.children.length).map((n) => textW(n.name, FS) + 12))));
+  const funW = Math.min(240, Math.max(110, ...[...own.keys()].map((n) => textW(label(n), FS) + 12)));
+  const chkW = 34;
+  const mopW = Math.min(380, Math.max(170, ...rows.map((x) => (x.i < 0 ? 90 : textW(x.n.mops[x.i], FS) + 12))));
+  const pbsName = (n) => (realizedBy.get(n) ?? []).map((p) => p.name).join('、');
+  const pbsW = hasP ? Math.min(300, Math.max(130, ...[...own.keys()].map((n) => textW(pbsName(n), FS) + 12))) : 0;
+  // 行の高さ: MOP の文の折り返しに合わせる。PBS の欄が収まらなければ、その要素の最後の行を高くする
+  const mopLines = rows.map((x) => (x.i < 0 ? ['(MOP なし)'] : wrap(x.n.mops[x.i], mopW - 2 * PAD, FS)));
+  const rh = mopLines.map((l) => Math.max(MINH, l.length * LH + 8));
+  const fit = (n, w, t) => { const [a, b] = own.get(n); const need = wrap(t, w - 2 * PAD, FS).length * LH + 8; let h = 0; for (let k = a; k <= b; k++) h += rh[k]; if (need > h) rh[b] += need - h; };
+  for (const n of own.keys()) { fit(n, funW + colW.slice(Math.max(0, (n.children.length || !n.parent ? n.depth : n.depth - 1))).reduce((a, b) => a + b, 0), label(n)); if (hasP) fit(n, pbsW, pbsName(n)); }
+  const HY = TOP, HH = 26, Y0 = HY + HH;
+  const ry = [Y0];
+  for (const h of rh) ry.push(ry[ry.length - 1] + h);
+  const x0 = M;
+  const colX = [x0];
+  for (const w of colW) colX.push(colX[colX.length - 1] + w);
+  const funX = colX[colX.length - 1], chkX = funX + funW, mopX = chkX + chkW, pbsX = mopX + mopW, endX = pbsX + pbsW;
+  const out = [];
+  // 見出し
+  const heads = colW.map((w, i) => [`第 ${i + 1} 層`, colX[i], w]).concat([['機能', funX, funW], ['済', chkX, chkW], ['テスト項目(MOP)', mopX, mopW]], hasP ? [['実現する PBS の要素', pbsX, pbsW]] : []);
+  for (const [t, x, w] of heads) out.push(`<rect x="${x}" y="${HY}" width="${w}" height="${HH}" fill="${COL.head}" stroke="${COL.grid}"/>` + T_(x + w / 2, HY + 17, t, { fs: FS, anchor: 'middle', weight: '600' }));
+  const cellRect = (x, y, w, h, wn) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${wn ? COL.warnFill : '#fff'}" stroke="${wn ? COL.warnLine : COL.grid}"${wn ? ' stroke-dasharray="5 3"' : ''}/>`;
+  const cellText = (x, y, w, h, t) => {
+    const lines = wrap(t, w - 2 * PAD, FS);
+    const max = Math.max(1, Math.floor((h - 4) / LH));
+    const shown = lines.slice(0, max);
+    if (lines.length > max) shown[max - 1] = clip(`${shown[max - 1]}……`, w - 2 * PAD, FS);
+    const sy = y + h / 2 - (shown.length - 1) * LH / 2 + 4;
+    return shown.map((l, i) => T_(x + PAD, sy + i * LH, l, { fs: FS })).join('');
+  };
+  // 途中の要素: 下の行をまとめたセル
+  for (const n of F) {
+    if (!n.parent || !n.children.length || !span.has(n)) continue;
+    const [a, b] = span.get(n), x = colX[n.depth - 1], w = colW[n.depth - 1], y = ry[a], h = ry[b + 1] - ry[a];
+    out.push(`<g ${sel(n)}><title>${esc(r.qname(n))}</title>${cellRect(x, y, w, h, warned.has(n))}${cellText(x, y, w, h, n.name)}</g>`);
+  }
+  let total = 0, done = 0;
+  for (const [n, [a, b]] of own) {
+    const lx = n.children.length || !n.parent ? colX[n.depth] ?? funX : colX[n.depth - 1];
+    const y = ry[a], h = ry[b + 1] - ry[a], wn = warned.has(n);
+    let g = `<g ${sel(n)}><title>${esc(r.qname(n))}</title>${cellRect(lx, y, chkX - lx, h, wn)}${cellText(lx, y, chkX - lx, h, label(n))}`;
+    if (hasP) g += cellRect(pbsX, y, pbsW, h, false) + cellText(pbsX, y, pbsW, h, pbsName(n));
+    out.push(`${g}</g>`);
+    const atts = n.attrList.filter((x) => x.key === 'mop' || x.key === 'mop*');
+    for (let k = a; k <= b; k++) {
+      const i = rows[k].i, yy = ry[k], hh = rh[k];
+      out.push(`<rect x="${chkX}" y="${yy}" width="${chkW}" height="${hh}" fill="#fff" stroke="${COL.grid}"/>`);
+      if (i < 0) { out.push(`<g ${sel(n)}>${cellRect(mopX, yy, mopW, hh, wn)}${T_(mopX + PAD, yy + hh / 2 + 4, '(MOP なし)', { fs: FS, fill: COL.sub })}</g>`); continue; }
+      const at = atts[i], ck = n.mopChecked[i];
+      total++; if (ck) done++;
+      const lines = mopLines[k], sy = yy + hh / 2 - (lines.length - 1) * LH / 2 + 4;
+      out.push(`<g data-id="${n.id}" data-start="${at.kstart}" data-end="${at.end}"><title>${esc(n.mops[i])}</title><rect x="${mopX}" y="${yy}" width="${mopW}" height="${hh}" fill="#fff" stroke="${COL.grid}"/>${lines.map((l, j) => T_(mopX + PAD, sy + j * LH, l, { fs: FS })).join('')}</g>`);
+      const cx = chkX + chkW / 2, cy = yy + hh / 2;
+      out.push(`<g data-mop="${n.id}|${i}" data-checked="${ck ? 1 : 0}"><title>${ck ? 'チェック済み(mop*:)。クリックで外す' : '未チェック(mop:)。クリックでチェック済みにする'}</title><rect x="${chkX + 1}" y="${yy + 1}" width="${chkW - 2}" height="${hh - 2}" fill="transparent"/><rect x="${cx - 7}" y="${cy - 7}" width="14" height="14" rx="2" fill="#fff" stroke="${COL.line}" stroke-width="1.3"/>${ck ? `<path d="M${cx - 4.5} ${cy}l3 3.2l6-6.6" fill="none" stroke="${COL.line}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}</g>`);
+    }
+  }
+  const sub = `チェック済み ${done} / ${total} 件。済の欄をクリックすると、mop:(未チェック)と mop*:(チェック済み)が切り替わる${warned.size ? '。点線の黄色い枠は MOP がない要素(検査 C3)' : ''}`;
+  const W = Math.max(endX + M, textW(sub, 11) + 2 * M);
+  return wrapSvg(W, ry[ry.length - 1] + M, title + T_(M, 42, sub, { fs: 11, fill: COL.sub }) + out.join(''));
+}
+
 // ---- 役割分担(仕様書 7.4 節)
 function renderRoles(r) {
   const M = 20, TOP = 46;
@@ -1143,7 +1231,7 @@ function renderGantt(r, opts = {}) {
     out.push(`<path d="M${x} ${TOP + HR}V${bodyY + n * L.RH + 6}" stroke="${COL.accent}" stroke-width="2" stroke-dasharray="6 3"/>` + T_(x + 3, bodyY + n * L.RH + 18, 'end', { fs: 11, fill: COL.accent }));
   }
   // 今日の線(今日の列の始まり。これより左で終わる棒が、完了でなければ遅れ)
-  if (today !== null && today >= s0 && today <= s0 + nDays) {
+  if (today !== null && today >= s0 && today < s0 + nDays) {
     const x = gx + (today - s0) * DW;
     out.push(`<path d="M${x} ${TOP + HR}V${bodyY + n * L.RH + 6}" stroke="${COL.line}" stroke-width="2"/>` + T_(x - 3, bodyY + n * L.RH + 18, '今日', { fs: 11, anchor: 'end', fill: COL.line, weight: '600' }));
   }
@@ -1170,6 +1258,7 @@ const VIEWS = [
   { id: 'fbs', label: 'FBS', need: ['FBS'] },
   { id: 'pbs', label: 'PBS', need: ['PBS'] },
   { id: 'match', label: 'FBS と PBS の対応', need: ['FBS', 'PBS'] },
+  { id: 'mop', label: 'テスト項目(MOP)', need: ['FBS'] },
   { id: 'wbs', label: 'WBS', need: ['WBS'] },
   { id: 'aoa', label: 'アローダイアグラム', need: ['WBS'] },
   { id: 'roles', label: '役割分担', need: ['WBS', 'members'] },
@@ -1183,6 +1272,7 @@ function render(r, view, opts = {}) {
     case 'fbs': return { svg: renderTree(r, 'FBS') };
     case 'pbs': return { svg: renderTree(r, 'PBS') };
     case 'match': return { svg: renderMatch(r) };
+    case 'mop': return { svg: renderMop(r) };
     case 'wbs': return { svg: renderTree(r, 'WBS') };
     case 'aoa': return { svg: renderAOA(r) };
     case 'roles': return { svg: renderRoles(r) };
@@ -1199,7 +1289,7 @@ function describe(r, id, opts = {}) {
   const items = [];
   const kind = n.sec === 'WBS' ? (!n.parent ? 'WBS の根' : n.children.length ? 'WBS の要素' : '作業') : `${n.sec} の${n.parent ? '要素' : '根'}`;
   if (n.num) items.push(['管理番号', n.num]);
-  if (n.sec === 'FBS' && n.mops.length) items.push(['MOP', n.mops.join(' / ')]);
+  if (n.sec === 'FBS' && n.mops.length) items.push(['MOP', n.mops.map((m, i) => `${n.mopChecked[i] ? '✓ ' : ''}${m}`).join(' / ')]);
   if (n.sec === 'PBS' && n.R.realizes?.length) items.push(['実現する機能', n.R.realizes.map((x) => x.name).join('、')]);
   if (n.sec === 'WBS') {
     if (n.for.length) items.push(['対象(for)', n.for.map((x) => x.name).join('、')]);
@@ -1224,7 +1314,7 @@ function toPrompt(diags, text) {
   const out = [];
   out.push('次の「プロジェクト計画」(https://plan.sapp.jp)のテキスト記法について、下の診断の内容を直したテキストを書いてください。');
   out.push('返すテキストはコードブロック(```)で囲まず、テキストだけを書いてください。見出し(#)・番号付きのリスト・太字(**)・説明の文の行は書けません(構文エラーになります)。');
-  out.push('書き方の要点: 節は「start:」「end:」「off:」「members:」「FBS: 根の名前」「PBS: 根の名前」「WBS: 根の名前」。要素は「- 名前」の字下げで階層を作り、属性は名前の後ろに「予約語: 値」を並べる(FBS は mop: note:、PBS は realizes: note:、WBS は for: days: by: review: after: status: note:)。複数の値はカンマ区切り。参照は名前で書き、同じ名前が複数あれば「親::子」と書く。メモは note: に書く。status: は作業(末端の要素)の状態で、todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。');
+  out.push('書き方の要点: 節は「start:」「end:」「off:」「members:」「FBS: 根の名前」「PBS: 根の名前」「WBS: 根の名前」。要素は「- 名前」の字下げで階層を作り、属性は名前の後ろに「予約語: 値」を並べる(FBS は mop: mop*:(チェック済みの MOP) note:、PBS は realizes: note:、WBS は for: days: by: review: after: status: note:)。複数の値はカンマ区切り。参照は名前で書き、同じ名前が複数あれば「親::子」と書く。メモは note: に書く。status: は作業(末端の要素)の状態で、todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。');
   out.push('');
   const er = diags.filter((d) => d.level === 'error'), wr = diags.filter((d) => d.level === 'warn');
   if (er.length) { out.push('## エラー'); for (const d of er) out.push(`- ${d.line} 行: ${d.message}`); out.push(''); }
@@ -1258,7 +1348,7 @@ function extractSource(svgText) {
 // 元のテキストから「新しいテキスト全体」を求めて返すだけで、図の側には状態を持たない。
 // 戻り値は { text, select } か { error }。select は書き換えの後に選ぶ要素({ sec, qname } か { member })
 const Edit = (() => {
-  const RE_KW = /(^|[ \t])(realizes|for|days|by|review|after|status|note|mop|off):/;
+  const RE_KW = /(^|[ \t])(realizes|for|days|by|review|after|status|note|mop\*?|off):/;
   const chain = (n) => { const a = []; for (let x = n; x; x = x.parent) a.unshift(x); return a; };
   const qn = (n) => chain(n).map((x) => x.name).join('::');
   const keyOf = (n) => (n.isMember ? { member: n.name } : { sec: n.sec, qname: qn(n) });
@@ -1357,10 +1447,89 @@ const Edit = (() => {
     return { text, select: o.select };
   }
 
-  // 属性を書き換える。value が空なら属性を消す。mop は値の配列で、元の位置のまま書き換える
+  const isMop = (a) => a.key === 'mop' || a.key === 'mop*';
+  // MOP の並び(mop: と mop*:)を書き換える(仕様書 11.2 節)。
+  // 元の文と同じ文は、チェック済みかどうかを引き継ぐ(並べ替えても同じ。同じ文が 2 つ以上あれば、チェック済みを先に引き継ぐ)。
+  // 同じ文の間で変わった文は、元の位置で文だけを置き換え、予約語(mop: か mop*:)はそのまま残す。
+  // 元にない文は、並びの位置に mop: で足し、減った文は消す
+  function setMops(r, n, list) {
+    const text = r.text, olds = n.attrList.filter(isMop);
+    const A = olds.map((a) => a.text), B = list;
+    // 最長共通部分列で、変わらない文を決める
+    const L = Array.from({ length: A.length + 1 }, () => new Array(B.length + 1).fill(0));
+    for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const anchors = [];
+    for (let i = 0, j = 0; i < A.length && j < B.length;) { if (A[i] === B[j]) { anchors.push([i, j]); i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) i++; else j++; }
+    anchors.push([A.length, B.length]);
+    const edits = [], ins = new Map(), want = [];
+    let pi = 0, pj = 0, lastEnd = null; // lastEnd: 直前に残る(または置き換える)MOP の終わりの位置
+    const insert = (v, key) => {
+      if (lastEnd !== null) { ins.set(lastEnd, `${ins.get(lastEnd) ?? ''} ${key}: ${v}`); return; }
+      const first = olds.find((a, i) => i >= pi && !cutSet.has(i));
+      if (first) { const k = first.kstart; ins.set(k, `${ins.get(k) ?? ''}${key}: ${v} `); } else ins.set(n.end, `${ins.get(n.end) ?? ''} ${key}: ${v}`);
+    };
+    // 消す MOP を先に決める(足す位置を、残る MOP の前後から選ぶため)
+    const cutSet = new Set();
+    { let a0 = 0, b0 = 0; for (const [ai, bj] of anchors) { const og = ai - a0, ng = bj - b0; for (let k = ng; k < og; k++) cutSet.add(a0 + k); a0 = ai + 1; b0 = bj + 1; } }
+    // 消す MOP のうち、同じ文が並びのどこかに残るものは、そのチェックを引き継ぐ(並べ替えたとき)
+    const spare = new Map(); // 文 → 消す MOP の予約語の並び
+    for (const i of cutSet) { const t = A[i]; if (!spare.has(t)) spare.set(t, []); spare.get(t).push(olds[i].key); }
+    const take = (t, onlyChecked) => {
+      const l = spare.get(t);
+      if (!l) return null;
+      const k = l.indexOf('mop*');
+      if (k >= 0) { l.splice(k, 1); return 'mop*'; }
+      if (onlyChecked || !l.length) return null;
+      return l.shift();
+    };
+    for (const [ai, bj] of anchors) {
+      const og = ai - pi, ng = bj - pj;
+      for (let k = 0; k < Math.max(og, ng); k++) {
+        if (k < og && k < ng) { const a = olds[pi + k]; edits.push({ start: a.kstart, end: a.end, text: `${a.key}: ${B[pj + k]}` }); want.push(`${a.key}\u0002${B[pj + k]}`); lastEnd = a.end; }
+        else if (k < og) edits.push(cutAttr(text, olds[pi + k]));
+        else { const key = take(B[pj + k], false) ?? 'mop'; insert(B[pj + k], key); want.push(`${key}\u0002${B[pj + k]}`); }
+      }
+      if (ai < A.length) {
+        const a = olds[ai];
+        // 同じ文の未チェックを残し、チェック済みを消すことになるときは、残す方をチェック済みにする
+        const up = a.key === 'mop' && take(A[ai], true);
+        if (up) edits.push({ start: a.kstart, end: a.kstart + a.key.length, text: 'mop*' });
+        want.push(`${up ? 'mop*' : a.key}\u0002${A[ai]}`); lastEnd = a.end;
+      }
+      pi = ai + 1; pj = bj + 1;
+    }
+    for (const [pos, t] of ins) edits.push({ start: pos, end: pos, text: t });
+    if (!edits.length) return { text, select: keyOf(n) };
+    return commit(r, edits, {
+      skip: new Set([n]), skipKeys: ['mop', 'mop*'], select: keyOf(n),
+      expect: (r2, nw) => (nw(n).attrList.filter(isMop).map((a) => `${a.key}\u0002${a.text}`).join('\u0001') === want.join('\u0001') ? null : 'MOP を書いたとおりに読めないので、書き換えませんでした'),
+    });
+  }
+  // MOP のチェックを切り替える(mop: と mop*: の予約語だけを書き換える)。index は、その行の MOP の何番目か
+  function setMopChecked(r, id, index, checked) {
+    const n = find(r, id);
+    if (!n || n.sec !== 'FBS') return fail('FBS の要素が見つかりません');
+    const olds = n.attrList.filter(isMop);
+    const a = olds[index];
+    if (!a) return fail('MOP が見つかりません');
+    const key = checked ? 'mop*' : 'mop';
+    if (a.key === key) return { text: r.text, select: keyOf(n) };
+    const want = olds.map((x) => `${x === a ? key : x.key}\u0002${x.text}`).join('\u0001');
+    return commit(r, [{ start: a.kstart, end: a.kstart + a.key.length, text: key }], {
+      skip: new Set([n]), skipKeys: ['mop', 'mop*'], select: keyOf(n),
+      expect: (r2, nw) => (nw(n).attrList.filter(isMop).map((x) => `${x.key}\u0002${x.text}`).join('\u0001') === want ? null : 'MOP のチェックを書いたとおりに読めないので、書き換えませんでした'),
+    });
+  }
+
+  // 属性を書き換える。value が空なら属性を消す。mop は値の配列(setMops)
   function setAttr(r, id, key, value) {
     const n = find(r, id);
     if (!n) return fail('要素が見つかりません');
+    if (key === 'mop') {
+      const list = (Array.isArray(value) ? value : [value]).map((v) => String(v).trim()).filter(Boolean);
+      for (const v of list) { const b = badText(v, '値'); if (b) return fail(b); }
+      return setMops(r, n, list);
+    }
     const text = r.text;
     const edits = [];
     const list = key === 'mop' ? (Array.isArray(value) ? value : [value]).map((v) => String(v).trim()).filter(Boolean) : [String(value).trim()].filter(Boolean);
@@ -1543,7 +1712,7 @@ const Edit = (() => {
     const n = r.nodes.find((x) => x.sec === key.sec && qn(x) === key.qname);
     return n ? n.id : null;
   }
-  return { setAttr, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
+  return { setAttr, setMopChecked, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
 })();
 
 return { parse, analyze, render, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
@@ -1551,8 +1720,8 @@ return { parse, analyze, render, describe, toPrompt, embedSource, extractSource,
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
-const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定\n  - 場所の設定\n- 通知\n  - 登録確認メール\n  - リマインドメール\n- 予定の共有\n  - アカウント登録\n  - 共有ユーザの選択\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、余裕の少ない作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「保存…」でファイルに保存してください。</p>\n";
+const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop: 終了が開始より前なら登録できない\n  - 場所の設定 mop*: 場所を 100 文字まで登録できる\n- 通知\n  - 登録確認メール mop: 予定の登録から 1 分以内にメールが届く\n  - リマインドメール mop: 予定の 30 分前にメールが届く\n- 予定の共有\n  - アカウント登録 mop*: メールアドレスとパスワードで登録できる\n  - 共有ユーザの選択 mop: 登録済みのユーザを 5 人まで選べる\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、余裕の少ない作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「保存…」でファイルに保存してください。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -1582,7 +1751,7 @@ function hlLine(line) {
   const body = line.slice(0, cut), cm = line.slice(cut);
   let h = escH(body)
     .replace(/^(start|end|off|members|FBS|PBS|WBS):/, '<span class="kw">$1:</span>')
-    .replace(/(^|[ \t])(realizes|for|days|by|review|after|status|note|mop|off):/g, '$1<span class="kw">$2:</span>')
+    .replace(/(^|[ \t])(realizes|for|days|by|review|after|status|note|mop\*?|off):/g, '$1<span class="kw">$2:</span>')
     .replace(/\b(\d{4}-\d{2}-\d{2})\b/g, '<span class="nu">$1</span>')
     .replace(/\b(mon|tue|wed|thu|fri|sat|sun)\b/g, '<span class="nu">$1</span>');
   if (cm) h += `<span class="cm">${escH(cm)}</span>`;
@@ -1686,6 +1855,11 @@ const editable = () => !!(last?.ok && !viewEl.classList.contains('stale') && deb
 
 canvasEl.addEventListener('click', (e) => {
   if (dragged) { dragged = false; return; }
+  // テスト項目(MOP)の表の「済」の欄: mop: と mop*: を切り替える
+  const mk = e.target.closest('[data-mop]');
+  if (mk && canvasEl.contains(mk)) {
+    if (!editable()) { showEditError('いまは図から編集できません(テキストにエラーがあるか、描き直しの途中です)。'); return; }
+    const [nid, i] = mk.getAttribute('data-mop').split('|'); applyEdit(Plan.Edit.setMopChecked(last, nid, +i, mk.getAttribute('data-checked') !== '1')); return; }
   const rel = e.target.closest('[data-rel]');
   if (rel && canvasEl.contains(rel)) { selectRel(rel.getAttribute('data-rel')); return; }
   const g = e.target.closest('[data-id]');
@@ -1745,7 +1919,7 @@ function buildForm(id) {
   if (!n) return;
   const can = editable();
   const form = el('div', 'form');
-  const raw = (key) => n.attrList.filter((a) => a.key === key).map((a) => a.text);
+  const raw = (key) => n.attrList.filter((a) => a.key === key || (key === 'mop' && a.key === 'mop*')).map((a) => a.text);
   const field = (label, value, onSet, opt = {}) => {
     const lab = el('label', null, label);
     const inp = opt.multi ? document.createElement('textarea') : document.createElement('input');
@@ -1776,7 +1950,7 @@ function buildForm(id) {
   field('名前', n.name, (v) => E.rename(last, id, v));
   const at = (key, label, ph) => field(label, raw(key)[0] ?? '', (v) => E.setAttr(last, id, key, v), { ph });
   if (n.isMember) { at('off', '休み(off)', 'wed, 2026-05-20'); at('note', 'メモ(note)'); }
-  else if (n.sec === 'FBS') { field('MOP(1 行に 1 つ)', raw('mop').join('\n'), (v) => E.setAttr(last, id, 'mop', v.split('\n')), { multi: true }); at('note', 'メモ(note)'); }
+  else if (n.sec === 'FBS') { field('MOP(1 行に 1 つ。改行は Shift+Enter)', raw('mop').join('\n'), (v) => E.setAttr(last, id, 'mop', v.split('\n')), { multi: true }); at('note', 'メモ(note)'); }
   else if (n.sec === 'PBS') { at('realizes', '実現する機能(realizes)', 'FBS の要素の名前, …'); at('note', 'メモ(note)'); }
   else {
     at('for', '対象(for)', 'PBS の要素の名前, …');
@@ -1826,9 +2000,12 @@ document.addEventListener('pointerdown', (e) => {
   if (!pendingField || pendingField.inp.contains(e.target)) return;
   const btn = e.target.closest('#edit button');
   const g = canvasEl.contains(e.target) ? e.target.closest('[data-id],[data-rel]') : null;
+  const mk = canvasEl.contains(e.target) ? e.target.closest('[data-mop]') : null;
   let action = null;
   const sl = e.target.closest('#edit select');
-  if (btn) action = { kind: 'button', label: btn.textContent };
+  // 済の欄: 書きかけを書き込むと MOP の並びや名前が変わり得るので、切り替えはしない(図を描き直すので、もう一度押してもらう)
+  if (mk) action = { kind: 'none' };
+  else if (btn) action = { kind: 'button', label: btn.textContent };
   else if (sl) action = { kind: 'focus', label: sl.parentElement.firstChild.textContent };
   else if (g?.hasAttribute('data-rel')) { const [a, b] = g.getAttribute('data-rel').split('|'); action = { kind: 'rel', keys: [a, b].map((x) => Plan.Edit.keyOf(Plan.Edit.find(last, x))) }; }
   else if (g) { const n = Plan.Edit.find(last, g.getAttribute('data-id')); if (n) action = { kind: 'node', key: Plan.Edit.keyOf(n) }; }
@@ -1838,7 +2015,7 @@ document.addEventListener('pointerdown', (e) => {
 function replay() {
   const a = pendingReplay;
   pendingReplay = null;
-  if (!a || !last?.ok) return;
+  if (!a || a.kind === 'none' || !last?.ok) return;
   if (a.kind === 'focus') { const l = [...editEl.querySelectorAll('label')].find((x) => x.firstChild?.textContent === a.label); l?.querySelector('select,input,textarea')?.focus(); return; }
   if (a.kind === 'button') { const b = [...editEl.querySelectorAll('button')].find((x) => x.textContent === a.label && !x.disabled); b?.click(); return; }
   if (a.kind === 'rel') { const ids = a.keys.map((k) => Plan.Edit.locate(last, k)); if (ids.every(Boolean)) selectRel(ids.join('|')); return; }
@@ -2018,6 +2195,8 @@ $('#saveAs').addEventListener('change', () => {
   if (!v) return;
   // 描き直しが残っていれば、先に描き直す(図と埋め込むテキストを食い違わせないため)
   if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
+  // 日付が変わっていれば、今日の線と遅れの印を描き直してから保存する
+  if (todayStr() !== drawnToday && last?.ok) draw();
   if (v === 'plan') { download(`${fileBase}.plan`, new Blob([srcEl.value], { type: 'text/plain;charset=utf-8' })); return; }
   const svg = !viewEl.classList.contains('stale') && shownSvg;
   if (!svg) { alert('保存できる図がありません(エラーを直すか、描けるビューを選んでください)'); return; }
@@ -2053,7 +2232,7 @@ function openFile(file) {
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(r.result)); }
     catch { alert(`${file.name}: UTF-8 として読めません`); return; }
     if (isSvg) { const x = Plan.extractSource(text); if (!x.ok) { alert(`${file.name}: ${x.error}`); return; } text = x.text; }
-    setText(text, base.replace(/_(fbs|pbs|match|wbs|aoa|roles|gantt)$/, ''));
+    setText(text, base.replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt)$/, ''));
   };
   r.onerror = () => alert(`${file.name} を読めませんでした`);
   r.readAsArrayBuffer(file);
