@@ -69,8 +69,17 @@ textarea#src::selection{background:rgba(139,26,43,.25);color:transparent}
 #view [data-id]{cursor:pointer}
 #view .selected rect,#view .selected path:not([stroke="transparent"]),#view .selected circle{stroke:var(--accent);stroke-width:2.5}
 #view .empty{padding:16px;color:#666}
-#edit{border-top:1px solid var(--line);background:var(--panel);padding:8px 10px;display:none;gap:6px 14px;flex-wrap:wrap;align-items:center}
-#edit.on{display:flex}
+#edit{border-top:1px solid var(--line);background:var(--panel);padding:8px 10px;display:none;max-height:45%;overflow:auto}
+#edit.on{display:block}
+#edit .row{display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+#edit .form{display:flex;gap:6px 12px;flex-wrap:wrap;align-items:flex-end}
+#edit label{display:flex;flex-direction:column;font-size:12px;color:#555;gap:2px}
+#edit input,#edit textarea{font:13px Consolas,"Courier New","Hiragino Sans","Noto Sans JP",monospace;padding:3px 6px;border:1px solid #bbb;border-radius:3px;width:15em}
+#edit textarea{width:24em;resize:vertical}
+#edit .btns{display:flex;gap:6px;align-items:center}
+#edit .editerr{color:var(--err);margin-bottom:6px}
+#view [data-handle]{cursor:ew-resize}
+#view [data-rel]{cursor:pointer}
 #edit .kind{font-weight:600}
 #edit .q{font:13px Consolas,"Courier New",monospace;color:#555}
 #edit .note{background:var(--sel);padding:1px 6px;border-radius:3px}
@@ -267,7 +276,8 @@ function parse(text0) {
       cur.lastInd = ind;
       const dup = members.find((m) => m.name === pa.name.text);
       if (dup) { err(ln, ls + pa.name.a, ls + pa.name.b, `担当者「${pa.name.text}」が 2 回書かれています(${dup.line} 行)`); return; }
-      const m = { name: pa.name.text, line: ln, start: ls + c0, end: ls + s.length, nameStart: ls + pa.name.a, nameEnd: ls + pa.name.b, off: [], note: null };
+      const m = { name: pa.name.text, line: ln, start: ls + c0, end: ls + s.length, nameStart: ls + pa.name.a, nameEnd: ls + pa.name.b, off: [], note: null,
+        lineStart: ls, lineEnd: ls + lines[ln - 1].length, lead: s.slice(0, c0), attrList: pa.attrs, isMember: true };
       for (const at of pa.attrs) {
         if (at.key === 'off') m.off = at.off;
         if (at.key === 'note') m.note = at.text;
@@ -298,6 +308,8 @@ function parse(text0) {
       id: `n${nodes.length}`, sec: key, name: pa.name.text, parent, children: [], depth: parent ? parent.depth + 1 : 0,
       line: ln, start: ls, end: ls + s.length, nameStart: ls + pa.name.a, nameEnd: ls + pa.name.b,
       attrs: {}, mops: [], note: null, order: nodes.length,
+      // 図からの編集で使う: 行の始まりと終わり(注を含む)、字下げの文字列、属性の並び(位置つき)
+      lineStart: ls, lineEnd: ls + lines[ln - 1].length, lead: parent ? /^[ \t]*/.exec(s)[0] : '', attrList: pa.attrs,
     };
     for (const at of pa.attrs) {
       if (at.key === 'mop') n.mops.push(at.text);
@@ -363,7 +375,7 @@ function parse(text0) {
           if (!r.text) { E(v.a, v.b, `「${x.key}:」の並びに空の項目があります(カンマが続いています)`); continue; }
           const segs = r.text.split('::').map((t) => t.trim());
           if (segs.some((t) => !t)) { E(r.a, r.b, `「${r.text}」の :: の前後に名前がありません`); continue; }
-          at.refs.push({ text: r.text, segs, start: ls + r.a, end: ls + r.b, line: ln });
+          at.refs.push({ text: r.text, segs, start: ls + r.a, end: ls + r.b, line: ln, noRoot: x.key === 'after' });
         }
       }
       attrs.push(at);
@@ -447,6 +459,7 @@ function analyze(text) {
     for (const r of at.refs) {
       const x = fn(r);
       if (x.error) { err(r, x.error); continue; }
+      r.node = x.node;
       if (seen.has(x.node)) { warn(r, `「${r.text}」が ${at.key}: に 2 回書かれています(1 回とみなします)`, '書き方'); continue; }
       seen.add(x.node);
       out.push(x.node);
@@ -776,7 +789,8 @@ function renderMatch(r) {
   const lines = [];
   for (const p of P) for (const f of p.R.realizes ?? []) {
     const a = pos.get(f), b = pos.get(p);
-    lines.push(`<path d="M${a.x + a.w} ${a.y + a.h / 2}L${b.x} ${b.y + b.h / 2}" fill="none" stroke="${COL.line}" stroke-width="1.2"/>`);
+    const d = `M${a.x + a.w} ${a.y + a.h / 2}L${b.x} ${b.y + b.h / 2}`;
+    lines.push(`<g data-rel="${p.id}|${f.id}"><title>${esc(`${f.name} ― ${p.name}`)}</title><path d="${d}" fill="none" stroke="${COL.line}" stroke-width="1.2"/><path d="${d}" fill="none" stroke="transparent" stroke-width="10"/></g>`);
   }
   const h = TOP + Math.max(F.length, P.length) * RH + M;
   const w = colX[1] + 6 * IND + BW + M;
@@ -922,7 +936,7 @@ function renderAOA(r) {
     out.push(s);
   });
   for (const e of g.events) out.push(`<circle cx="${cx(e)}" cy="${cy(e)}" r="${R}" fill="#fff" stroke="${COL.line}" stroke-width="1.5"/>`);
-  out.push(...lbl);
+  out.push(`<g pointer-events="none">${lbl.join('')}</g>`); // 文字はクリックを通す(矢印を選び・ドラッグできるように)
   const W = M * 2 + R * 2 + Math.max(...ranks) * RX;
   // 下に作業の表(管理番号・名前・日数・最早開始・最遅開始・余裕)
   const FS = 12, RH = 20;
@@ -1088,6 +1102,7 @@ function renderGantt(r) {
     }
   });
   // 棒
+  const handles = [];
   r.tasks.forEach((t, i) => {
     const y = bodyY + i * L.RH + 4, h = L.RH - 8;
     const color = t.crit ? COL.accent : COL.blue;
@@ -1102,11 +1117,13 @@ function renderGantt(r) {
       }
     }
     out.push(`<g ${sel(t)}><title>${esc(`${t.num} ${t.name}: ${fmtDate(s0 + t.d0)} 〜 ${fmtDate(s0 + t.d1)}(${fmtDays(t.days)} 日)`)}</title>${s}</g>`);
+    if (t.days > 0) handles.push(`<rect data-handle="${t.id}" data-days="${t.days}" data-dw="${DW}" x="${gx + t.f / 1000 * DW - 4}" y="${y - 1}" width="8" height="${h + 2}" fill="transparent"><title>ドラッグで日数を変える</title></rect>`);
   });
   if (endD) {
     const x = gx + endD * DW;
     out.push(`<path d="M${x} ${TOP + HR}V${bodyY + n * L.RH + 6}" stroke="${COL.accent}" stroke-width="2" stroke-dasharray="6 3"/>` + T_(x + 3, bodyY + n * L.RH + 18, 'end', { fs: 11, fill: COL.accent }));
   }
+  out.push(...handles);
   const body = drawWbsLeft(r, L, M, bodyY, (t) => [[byW, who(r, t.by)]]);
   const head = summaryText(r);
   const W = gx + nDays * DW + M + 30;
@@ -1199,13 +1216,298 @@ function extractSource(svgText) {
   catch { return { ok: false, error: '埋め込まれたテキストが壊れています' }; }
 }
 
-return { parse, analyze, render, describe, toPrompt, embedSource, extractSource, VIEWS, fmtDays, fmtDate, buildAOA };
+// ================= 図からの編集(仕様書 11 章) =================
+// テキストが正本。図での操作は、ここでテキストの書き換えに直す。どの関数も、解析し直す前の結果 r と
+// 元のテキストから「新しいテキスト全体」を求めて返すだけで、図の側には状態を持たない。
+// 戻り値は { text, select } か { error }。select は書き換えの後に選ぶ要素({ sec, qname } か { member })
+const Edit = (() => {
+  const RE_KW = /(^|[ \t])(realizes|for|days|by|review|after|note|mop|off):/;
+  const chain = (n) => { const a = []; for (let x = n; x; x = x.parent) a.unshift(x); return a; };
+  const qn = (n) => chain(n).map((x) => x.name).join('::');
+  const keyOf = (n) => (n.isMember ? { member: n.name } : { sec: n.sec, qname: qn(n) });
+  const find = (r, id) => (/^m\d+$/.test(id) ? r.members[+id.slice(1)] : r.nodes.find((x) => x.id === id));
+  const subtree = (n) => { const a = [n]; for (const c of n.children ?? []) a.push(...subtree(c)); return a; };
+  const lastLineEnd = (n) => Math.max(...subtree(n).map((x) => x.lineEnd));
+  const isAnc = (a, b) => { for (let x = b.parent; x; x = x.parent) if (x === a) return true; return false; };
+  const fail = (error) => ({ error });
+
+  // 書き換え(位置の並び)をテキストに当てる
+  const apply = (text, edits) => {
+    let t = text;
+    for (const e of [...edits].sort((a, b) => b.start - a.start || b.end - a.end)) t = t.slice(0, e.start) + e.text + t.slice(e.end);
+    return t;
+  };
+  // 元のテキストの位置が、書き換えの後のどこへ移るか。書き換えで消えた範囲の中なら null
+  const mapPos = (edits, pos) => {
+    let shift = 0;
+    for (const e of edits) {
+      if (e.end > e.start) { if (pos >= e.start && pos < e.end) return null; if (e.end <= pos) shift += e.text.length - (e.end - e.start); }
+      else if (e.start <= pos) shift += e.text.length;
+    }
+    return pos + shift;
+  };
+  // 属性を前の空白ごと消す範囲
+  const cutAttr = (text, at) => { let a = at.kstart; while (a > 0 && /[ \t]/.test(text[a - 1])) a--; return { start: a, end: at.end, text: '' }; };
+  // 修飾名の候補(節の要素の並び list の中で、segs に当てはまるもの)
+  const matches = (list, segs, noRoot) => list.filter((m) => {
+    if (m.name !== segs[segs.length - 1] || (noRoot && !m.parent)) return false;
+    let a = m.parent;
+    for (let j = segs.length - 2; j >= 0; j--) { if (!a || a.name !== segs[j]) return false; a = a.parent; }
+    return true;
+  });
+  // 参照に書く名前: その節で一意に決まる、いちばん短い修飾名
+  function refName(list, n, noRoot) {
+    const c = chain(n).map((x) => x.name);
+    for (let k = 1; k <= c.length; k++) { const segs = c.slice(c.length - k); if (matches(list, segs, noRoot).length === 1) return segs.join('::'); }
+    return c.join('::');
+  }
+  const secList = (nodes, sec) => nodes.filter((x) => x.sec === sec);
+
+  // 名前や値に書けない文字列(書くと、同じ行の後ろの属性が注になったり、別の属性が始まったりする)
+  function badText(v, what) {
+    if (/(^|[ \t])\/\//.test(v)) return `${what}に「空白 + //」は書けません(そこから後ろが注になります)`;
+    if (RE_KW.test(v)) return `${what}に「空白 + 予約語 + 半角コロン」は書けません(そこから別の属性と読まれます。全角のコロンを使ってください)`;
+    if (/\*\*|__/.test(v)) return `${what}に ** と __ は書けません`;
+    return null;
+  }
+  const badName = (name) => {
+    if (!name.trim()) return '名前が空です';
+    if (/[,]|::/.test(name)) return '名前に「,」と「::」は使えません';
+    return badText(name, '名前');
+  };
+
+  // ---- 書き込む前の確認(仕様書 11.1 節)。書き換えの候補を解析し直し、次をすべて満たすときだけ書き込む
+  //  1. 新しいエラーが出ない(削除だけは、消した要素への参照のエラーを認める)
+  //  2. 対象でない要素は、親子関係・属性・参照先が変わらない
+  //  3. 対象の要素は、意図したとおりになる(expect で確かめる)
+  function commit(r, edits, o) {
+    const text = apply(r.text, edits);
+    const r2 = analyze(text);
+    const p2 = r2.parse;
+    const errs = r2.diags.filter((d) => d.level === 'error');
+    if (errs.length && !(o.allowRefErrors && errs.every((d) => d.cat === '参照'))) return fail(`この書き換えをするとテキストがエラーになるので、書き換えませんでした(${errs[0].message})`);
+    const at = (pos) => { const q = mapPos(edits, pos); return q === null ? null : q; };
+    const byLine = new Map([...p2.nodes, ...p2.members].map((x) => [x.lineStart, x]));
+    const nw = (n) => { const q = at(n.lineStart); return q === null ? null : byLine.get(q) ?? null; };
+    const skip = o.skip ?? new Set(); // 対象の要素(属性の比較から外す)
+    const sigA = (n, drop) => n.attrList.filter((a) => !drop.includes(a.key)).map((a) => `${a.key}:${a.refs ? '' : a.text}`).join('|');
+    for (const n of [...r.nodes, ...r.members]) {
+      if (o.removed?.has(n)) continue;
+      const m = nw(n);
+      if (!m) return fail('書き換えの位置がずれるため、書き換えませんでした(テキストの書き方を確かめてください)');
+      if (!n.isMember) {
+        const pOld = n.parent ? nw(n.parent) : null;
+        if ((m.parent ?? null) !== pOld) return fail('字下げの幅がそろっていないため、この書き換えをすると別の要素の親子関係が変わります。テキストで字下げをそろえてから操作してください');
+      }
+      const drop = skip.has(n) ? (o.skipKeys ?? []) : [];
+      if (!(o.renamed === n) && m.name !== n.name) return fail('書き換えで別の要素の名前が変わるため、書き換えませんでした');
+      if (sigA(n, drop) !== sigA(m, drop)) return fail('書き換えで別の属性が変わるため、書き換えませんでした');
+    }
+    // 参照先が変わらない(対象の要素の、書き換えた属性を除く)
+    if (r2.ok) {
+      for (const n of [...r.nodes]) {
+        if (o.removed?.has(n)) continue;
+        const m = nw(n);
+        for (const k of Object.keys(n.R ?? {})) {
+          if (skip.has(n) && (o.skipKeys ?? []).includes(k)) continue;
+          const a = n.R[k].map((x) => (x.isMember ? `m:${x.name === o.oldName && o.renamed === x ? o.newName : x.name}` : at(x.lineStart))).join(',');
+          const b = (m.R?.[k] ?? []).map((x) => (x.isMember ? `m:${x.name}` : x.lineStart)).join(',');
+          if (a !== b) return fail('書き換えで別の要素の参照先が変わるため、書き換えませんでした');
+        }
+      }
+    }
+    if (o.expect) { const e = o.expect(r2, nw); if (e) return fail(e); }
+    return { text, select: o.select };
+  }
+
+  // 属性を書き換える。value が空なら属性を消す。mop は値の配列で、元の位置のまま書き換える
+  function setAttr(r, id, key, value) {
+    const n = find(r, id);
+    if (!n) return fail('要素が見つかりません');
+    const text = r.text;
+    const edits = [];
+    const list = key === 'mop' ? (Array.isArray(value) ? value : [value]).map((v) => String(v).trim()).filter(Boolean) : [String(value).trim()].filter(Boolean);
+    for (const v of list) { const b = badText(v, '値'); if (b) return fail(b); }
+    if (key !== 'mop' && key !== 'note' && list[0] && /(^|[ \t])\/\//.test(list[0])) return fail('値に「空白 + //」は書けません');
+    const olds = n.attrList.filter((a) => a.key === key);
+    // 元の位置のまま置き換え、余れば消し、足りなければ行の終わりに足す
+    olds.forEach((a, i) => edits.push(i < list.length ? { start: a.kstart, end: a.end, text: `${key}: ${list[i]}` } : cutAttr(text, a)));
+    if (list.length > olds.length) edits.push({ start: n.end, end: n.end, text: list.slice(olds.length).map((v) => ` ${key}: ${v}`).join('') });
+    if (!edits.length) return { text, select: keyOf(n) };
+    return commit(r, edits, {
+      skip: new Set([n]), skipKeys: [key], select: keyOf(n),
+      expect: (r2, nw) => {
+        const m = nw(n);
+        const got = m.attrList.filter((a) => a.key === key).map((a) => a.text);
+        return got.join('\u0001') === list.join('\u0001') ? null : `「${key}:」の値を、書いたとおりに読めないので、書き換えませんでした`;
+      },
+    });
+  }
+
+  // 名前を変える。その要素(と下位の要素)を指す参照も新しい名前に書き換え、曖昧になる参照は修飾名を付け直す
+  function rename(r, id, newName0) {
+    const n = find(r, id);
+    if (!n) return fail('要素が見つかりません');
+    const newName = newName0.trim();
+    const bad = badName(newName);
+    if (bad) return fail(bad);
+    if (newName === n.name) return { text: r.text, select: keyOf(n) };
+    const sibs = n.isMember ? r.members : n.parent ? n.parent.children : [];
+    if (sibs.some((x) => x !== n && x.name === newName)) return fail(n.isMember ? `担当者に「${newName}」がすでにいます` : `同じ親の下に「${newName}」がすでにあります`);
+    const edits = [{ start: n.nameStart, end: n.nameEnd, text: newName }];
+    const refs = [];
+    for (const m of [...r.nodes, ...r.members]) for (const at of m.attrList) for (const ref of at.refs ?? []) if (ref.node) refs.push(ref);
+    const newText = new Map(); // 参照 → 書き換えた後の文字列
+    for (const ref of refs) {
+      const d = ref.node;
+      if (n.isMember) { if (d === n) newText.set(ref, newName); continue; }
+      if (d.isMember || !(d === n || isAnc(n, d))) continue;
+      const c = chain(d);
+      const k = c.indexOf(n), off = c.length - ref.segs.length;
+      if (k < off) continue;
+      const segs = [...ref.segs];
+      segs[k - off] = newName;
+      newText.set(ref, segs.join('::'));
+    }
+    for (const [ref, t] of newText) edits.push({ start: ref.start, end: ref.end, text: t });
+    // 書き換えた後の木で、曖昧になる参照には修飾名を付け直す
+    if (!n.isMember) {
+      const t1 = apply(r.text, edits);
+      const p1 = parse(t1);
+      const byLine = new Map(p1.nodes.map((x) => [x.lineStart, x]));
+      for (const ref of refs) {
+        if (ref.node.isMember) continue;
+        const cur = newText.get(ref) ?? ref.text;
+        const list = secList(p1.nodes, ref.node.sec);
+        const noRoot = !!ref.noRoot;
+        if (matches(list, cur.split('::').map((s) => s.trim()), noRoot).length === 1) continue;
+        const d1 = byLine.get(mapPos(edits, ref.node.lineStart));
+        if (!d1) continue;
+        const name = refName(list, d1, noRoot);
+        const i = edits.findIndex((e) => e.start === ref.start && e.end === ref.end);
+        if (i >= 0) edits[i] = { start: ref.start, end: ref.end, text: name }; else edits.push({ start: ref.start, end: ref.end, text: name });
+      }
+    }
+    const sel = n.isMember ? { member: newName } : { sec: n.sec, qname: qn(n).split('::').slice(0, -1).concat(newName).join('::') };
+    return commit(r, edits, { renamed: n, oldName: n.name, newName, select: sel, expect: (r2, nw) => (nw(n)?.name === newName ? null : '名前を書いたとおりに読めないので、書き換えませんでした') });
+  }
+
+  const uniqueName = (sibs, base) => { let name = base, i = 2; while (sibs.some((x) => x.name === name)) name = `${base}${i++}`; return name; };
+  // 子を足す: 下位の要素の最後の行の後ろに、最後の子と同じ字下げで(子がなければ親の字下げに空白 2 個を足して)
+  function addChild(r, id) {
+    const n = find(r, id);
+    if (!n || n.isMember) return fail('子を足せない要素です');
+    const name = uniqueName(n.children, '新しい要素');
+    const lc = n.children[n.children.length - 1];
+    const lead = lc ? lc.lead : n.parent ? `${n.lead}  ` : '';
+    const at = lastLineEnd(n);
+    return commit(r, [{ start: at, end: at, text: `\n${lead}- ${name}` }], {
+      select: { sec: n.sec, qname: `${qn(n)}::${name}` },
+      expect: (r2) => (r2.parse.nodes.some((x) => x.name === name && x.parent && x.parent.lineStart === n.lineStart) ? null : '足した要素が、この要素の子として読めないので、書き換えませんでした(字下げをそろえてください)'),
+    });
+  }
+  function addSibling(r, id) {
+    const n = find(r, id);
+    if (!n) return fail('要素が見つかりません');
+    if (!n.isMember && !n.parent) return fail('根には兄弟を足せません');
+    const sibs = n.isMember ? r.members : n.parent.children;
+    const name = uniqueName(sibs, n.isMember ? '新しい担当者' : '新しい要素');
+    const at = n.isMember ? n.lineEnd : lastLineEnd(n);
+    const parentLine = n.isMember ? null : mapPos([], n.parent.lineStart);
+    return commit(r, [{ start: at, end: at, text: `\n${n.lead}- ${name}` }], {
+      select: n.isMember ? { member: name } : { sec: n.sec, qname: `${qn(n.parent)}::${name}` },
+      expect: (r2) => (n.isMember ? (r2.parse.members.some((m) => m.name === name) ? null : '担当者を足せませんでした')
+        : (r2.parse.nodes.some((x) => x.name === name && x.parent && x.parent.lineStart === parentLine) ? null : '足した要素が兄弟として読めないので、書き換えませんでした(字下げをそろえてください)')),
+    });
+  }
+  // 消す(下位の要素の行も)。消す要素を指している参照の数も返す(画面で確認に使う)。消した要素への参照のエラーだけは認める
+  function remove(r, id) {
+    const n = find(r, id);
+    if (!n) return fail('要素が見つかりません');
+    if (!n.isMember && !n.parent) return fail('根は消せません(節ごと消すときはテキストで消してください)');
+    const gone = new Set(n.isMember ? [n] : subtree(n));
+    let refs = 0;
+    for (const m of [...r.nodes, ...r.members]) if (!gone.has(m)) for (const at of m.attrList) for (const ref of at.refs ?? []) if (gone.has(ref.node)) refs++;
+    const end = n.isMember ? n.lineEnd : lastLineEnd(n);
+    const t = r.text;
+    const range = end < t.length ? { start: n.lineStart, end: end + 1, text: '' } : { start: Math.max(0, n.lineStart - 1), end, text: '' };
+    const res = commit(r, [range], { removed: gone, allowRefErrors: true, select: null });
+    if (res.error) return res;
+    return { ...res, refs, count: gone.size };
+  }
+  // 参照の並びに 1 つ足す・除く
+  function addRef(r, n, key, name) {
+    const at = n.attrList.find((a) => a.key === key);
+    if (!at) return [{ start: n.end, end: n.end, text: ` ${key}: ${name}` }];
+    return [{ start: at.start, end: at.end, text: `${r.text.slice(at.start, at.end)}, ${name}` }];
+  }
+  function dropRef(r, n, key, target) {
+    const at = n.attrList.find((a) => a.key === key);
+    if (!at) return null;
+    const keep = at.refs.filter((x) => x.node !== target);
+    if (keep.length === at.refs.length) return null;
+    return [keep.length ? { start: at.start, end: at.end, text: keep.map((x) => x.text).join(', ') } : cutAttr(r.text, at)];
+  }
+  const refExpect = (n, key, want) => (r2, nw) => {
+    const m = nw(n);
+    const got = (m.R?.[key] ?? []).map((x) => x.lineStart).sort((a, b) => a - b).join(',');
+    return got === want ? null : '参照を書いたとおりに読めないので、書き換えませんでした';
+  };
+  const wantRefs = (n, key, plus, minus) => (edits) => [...(n.R[key] ?? []).filter((x) => x !== minus), ...(plus ? [plus] : [])].map((x) => mapPos(edits, x.lineStart)).sort((a, b) => a - b).join(',');
+  // FBS と PBS の対応を足す・除く(PBS の要素の realizes:)
+  function addRealizes(r, aId, bId) {
+    let p = find(r, aId), f = find(r, bId);
+    if (p && f && p.sec === 'FBS' && f.sec === 'PBS') [p, f] = [f, p];
+    if (!p || !f || p.sec !== 'PBS' || f.sec !== 'FBS') return fail('FBS の要素と PBS の要素を結んでください');
+    if ((p.R.realizes ?? []).includes(f)) return fail('すでに対応しています');
+    const edits = addRef(r, p, 'realizes', refName(r.bySec.FBS, f, false));
+    return commit(r, edits, { skip: new Set([p]), skipKeys: ['realizes'], select: keyOf(p), expect: refExpect(p, 'realizes', wantRefs(p, 'realizes', f)(edits)) });
+  }
+  function removeRealizes(r, pbsId, fbsId) {
+    const p = find(r, pbsId), f = find(r, fbsId);
+    const edits = p && f ? dropRef(r, p, 'realizes', f) : null;
+    if (!edits) return fail('この対応は、PBS の要素の realizes: に直接書かれていません');
+    return commit(r, edits, { skip: new Set([p]), skipKeys: ['realizes'], select: keyOf(p), expect: refExpect(p, 'realizes', wantRefs(p, 'realizes', null, f)(edits)) });
+  }
+  // 依存を足す: 作業 succ の after: に作業 pred を足す(アローダイアグラムで pred から succ へ引く)
+  function addAfter(r, predId, succId) {
+    const p = find(r, predId), s2 = find(r, succId);
+    if (!p || !s2 || p.sec !== 'WBS' || s2.sec !== 'WBS' || p === s2) return fail('別の作業どうしを結んでください');
+    if (isAnc(p, s2) || isAnc(s2, p)) return fail('上位・下位の要素どうしは結べません');
+    const anc = (t) => { const seen = new Set(); const st = [...(t.pred ?? [])]; while (st.length) { const q = st.pop(); if (!seen.has(q)) { seen.add(q); st.push(...(q.pred ?? [])); } } return seen; };
+    if (anc(p).has(s2)) return fail(`「${s2.name}」は「${p.name}」より前の作業なので、結ぶと依存関係が循環します`);
+    if (anc(s2).has(p)) return fail(`「${s2.name}」はすでに「${p.name}」の後です`);
+    const edits = addRef(r, s2, 'after', refName(r.bySec.WBS, p, true));
+    return commit(r, edits, { skip: new Set([s2]), skipKeys: ['after'], select: keyOf(s2), expect: refExpect(s2, 'after', wantRefs(s2, 'after', p)(edits)) });
+  }
+  function removeAfter(r, succId, predId) {
+    const s2 = find(r, succId), p = find(r, predId);
+    const edits = s2 && p ? dropRef(r, s2, 'after', p) : null;
+    if (!edits) return fail('この依存は、この作業の after: に直接書かれていません');
+    return commit(r, edits, { skip: new Set([s2]), skipKeys: ['after'], select: keyOf(s2), expect: refExpect(s2, 'after', wantRefs(s2, 'after', null, p)(edits)) });
+  }
+  function setDays(r, id, milli) {
+    const n = find(r, id);
+    if (!n || n.sec !== 'WBS' || n.children.length || !n.parent) return fail('日数は作業(末端の要素)にだけ書けます');
+    return setAttr(r, id, 'days', fmtDays(Math.max(0, Math.min(36500000, Math.round(milli)))));
+  }
+  // 選ぶ要素を、書き換えた後の解析結果から探す
+  function locate(r, key) {
+    if (!key) return null;
+    if (key.member) { const i = r.members.findIndex((m) => m.name === key.member); return i >= 0 ? `m${i}` : null; }
+    const n = r.nodes.find((x) => x.sec === key.sec && qn(x) === key.qname);
+    return n ? n.id : null;
+  }
+  return { setAttr, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, locate, keyOf, find };
+})();
+
+return { parse, analyze, render, describe, toPrompt, embedSource, extractSource, VIEWS, fmtDays, fmtDate, buildAOA, Edit };
 })();
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
 const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定\n  - 場所の設定\n- 通知\n  - 登録確認メール\n  - リマインドメール\n- 予定の共有\n  - アカウント登録\n  - 共有ユーザの選択\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田\n    - 通知用API URI for: 通知API days: 1 by: 青木\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、余裕の少ない作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n</ul>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。</p>\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、余裕の少ない作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -1325,30 +1627,275 @@ async function copyText(text, btn) {
   const t = btn.textContent; btn.textContent = 'コピーしました'; setTimeout(() => { btn.textContent = t; }, 1500);
 }
 
-// ---- 図の要素を選ぶ
+// ---- 図の要素を選ぶ・図から編集する
+// テキストが正本。図での編集は、Plan.Edit がテキストの書き換えに直し、applyEdit がテキスト欄に書き込む。
+// 書き込んだら待たずに解析し直して描くので、図はいつもテキストと一致する。図の側に状態は持たない
+let selectedKey = null;   // 選んでいる要素を、書き換えの後も見つけるための鍵({ sec, qname } か { member })
+let selectedRel = null;   // 選んでいる対応の線(「PBS の id|FBS の id」)
+let dragged = false;      // ドラッグの直後のクリックを無視するため
+const editable = () => !!(last?.ok && !viewEl.classList.contains('stale') && debounce === null);
+
 canvasEl.addEventListener('click', (e) => {
+  if (dragged) { dragged = false; return; }
+  const rel = e.target.closest('[data-rel]');
+  if (rel && canvasEl.contains(rel)) { selectRel(rel.getAttribute('data-rel')); return; }
   const g = e.target.closest('[data-id]');
-  if (!g || !canvasEl.contains(g)) { select(null); return; }
-  select(g.getAttribute('data-id'));
+  if (!g || !canvasEl.contains(g)) { select(null, true); return; }
+  select(g.getAttribute('data-id'), true);
   const s = +g.getAttribute('data-start'), t = +g.getAttribute('data-end');
   if (Number.isFinite(s) && Number.isFinite(t)) selectText(s, t);
 });
-function select(id) {
-  selectedId = id;
-  canvasEl.querySelectorAll('.selected').forEach((g) => g.classList.remove('selected'));
+function clearSel() {
+  // 選択の印を外す。空になった class 属性も消し、図をテキストから描いたときと同じ形に戻す
+  canvasEl.querySelectorAll('.selected').forEach((g) => { g.classList.remove('selected'); if (!g.getAttribute('class')) g.removeAttribute('class'); });
   editEl.textContent = '';
   editEl.classList.remove('on');
+}
+function select(id, byUser) {
+  selectedId = id;
+  selectedRel = null;
+  if (byUser) { const n = id && last?.ok ? Plan.Edit.find(last, id) : null; selectedKey = n ? Plan.Edit.keyOf(n) : null; }
+  clearSel();
   if (!id || !last?.ok || viewEl.classList.contains('stale')) return;
   canvasEl.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach((g) => g.classList.add('selected'));
   const info = Plan.describe(last, id);
   if (!info) return;
-  editEl.append(el('span', 'kind', info.kind));
-  editEl.append(el('span', null, `名前: ${info.name}`));
-  if (info.qname) editEl.append(el('span', 'q', `修飾名: ${info.qname}`));
-  for (const [k, v] of info.items) editEl.append(el('span', k === 'note' ? 'note' : 'small', `${k}: ${v}`));
+  const head = el('div', 'row');
+  head.append(el('span', 'kind', info.kind));
+  if (info.qname) head.append(el('span', 'q', `修飾名: ${info.qname}`));
+  for (const [k, v] of info.items) if (!['note', 'MOP', '対象(for)', '作成', '確認', '先行', '実現する機能', '休み'].includes(k)) head.append(el('span', 'small', `${k}: ${v}`));
+  editEl.append(head);
+  buildForm(id);
   editEl.classList.add('on');
 }
-function reselect() { if (selectedId && canvasEl.querySelector(`[data-id="${CSS.escape(selectedId)}"]`)) select(selectedId); else select(null); }
+function selectRel(rel) {
+  selectedId = null; selectedKey = null; selectedRel = rel;
+  clearSel();
+  if (!last?.ok) return;
+  canvasEl.querySelectorAll(`[data-rel="${CSS.escape(rel)}"]`).forEach((g) => g.classList.add('selected'));
+  const [pid, fid] = rel.split('|');
+  const p = Plan.Edit.find(last, pid), f = Plan.Edit.find(last, fid);
+  const row = el('div', 'row');
+  row.append(el('span', 'kind', '対応'), el('span', null, `FBS「${f.name}」― PBS「${p.name}」`));
+  const del = el('button', null, 'この対応を消す');
+  del.disabled = !editable();
+  del.addEventListener('click', () => applyEdit(Plan.Edit.removeRealizes(last, pid, fid)));
+  row.append(del);
+  editEl.append(row);
+  editEl.classList.add('on');
+}
+function reselect() {
+  if (selectedKey && last?.ok) selectedId = Plan.Edit.locate(last, selectedKey);
+  if (selectedRel && canvasEl.querySelector(`[data-rel="${CSS.escape(selectedRel)}"]`)) { selectRel(selectedRel); return; }
+  if (selectedId && canvasEl.querySelector(`[data-id="${CSS.escape(selectedId)}"]`)) select(selectedId); else if (selectedId && last?.ok && Plan.Edit.find(last, selectedId)) select(selectedId); else select(null);
+}
+
+// 編集パネル: 選んだ要素の名前と属性を、テキストのとおりに表示し、書き換えたらテキストに書き込む
+function buildForm(id) {
+  const n = Plan.Edit.find(last, id);
+  if (!n) return;
+  const can = editable();
+  const form = el('div', 'form');
+  const raw = (key) => n.attrList.filter((a) => a.key === key).map((a) => a.text);
+  const field = (label, value, onSet, opt = {}) => {
+    const lab = el('label', null, label);
+    const inp = opt.multi ? document.createElement('textarea') : document.createElement('input');
+    inp.value = value;
+    if (opt.multi) inp.rows = Math.max(1, value.split('\n').length);
+    if (opt.ph) inp.placeholder = opt.ph;
+    inp.disabled = !can;
+    let done = false; // 書き込んだ後、欄から離れるときの change で二重に書き込まないため(書き込めなかったときは立てない)
+    const commit = (focus) => {
+      if (done || inp.value === value) return false;
+      const ok = applyEdit(onSet(inp.value), { focusLabel: label, ...focus });
+      if (ok) done = true;
+      if (pendingField?.inp === inp) pendingField = null;
+      return ok;
+    };
+    inp.addEventListener('input', () => { pendingField = inp.value === value ? null : { inp, commit }; });
+    inp.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) return; // 日本語入力の変換中の Enter などは書き込みに使わない
+      if (e.key === 'Enter' && !(opt.multi && e.shiftKey)) { e.preventDefault(); commit({}); }
+      else if (e.key === 'Tab' && inp.value !== value) { e.preventDefault(); commit({ move: e.shiftKey ? -1 : 1 }); }
+      else if (e.key === 'Escape') { inp.value = value; pendingField = null; inp.blur(); }
+    });
+    inp.addEventListener('change', () => commit({ keep: true }));
+    lab.append(inp);
+    form.append(lab);
+  };
+  const E = Plan.Edit;
+  field('名前', n.name, (v) => E.rename(last, id, v));
+  const at = (key, label, ph) => field(label, raw(key)[0] ?? '', (v) => E.setAttr(last, id, key, v), { ph });
+  if (n.isMember) { at('off', '休み(off)', 'wed, 2026-05-20'); at('note', 'メモ(note)'); }
+  else if (n.sec === 'FBS') { field('MOP(1 行に 1 つ)', raw('mop').join('\n'), (v) => E.setAttr(last, id, 'mop', v.split('\n')), { multi: true }); at('note', 'メモ(note)'); }
+  else if (n.sec === 'PBS') { at('realizes', '実現する機能(realizes)', 'FBS の要素の名前, …'); at('note', 'メモ(note)'); }
+  else {
+    at('for', '対象(for)', 'PBS の要素の名前, …');
+    if (n.parent && !n.children.length) at('days', '日数(days)', '1');
+    at('by', '作成(by)', '担当者の名前, …');
+    at('review', '確認(review)', '担当者の名前, …');
+    if (n.parent) at('after', '先行(after)', 'WBS の要素の名前, …');
+    at('note', 'メモ(note)');
+  }
+  const btns = el('div', 'btns');
+  const btn = (label, fn, title) => { const b = el('button', null, label); b.disabled = !can; if (title) b.title = title; b.addEventListener('click', fn); btns.append(b); };
+  if (n.isMember) btn('担当者を追加', () => applyEdit(E.addSibling(last, id)));
+  else {
+    btn('子を追加', () => applyEdit(E.addChild(last, id)), 'この要素の下に要素を足す');
+    if (n.parent) btn('兄弟を追加', () => applyEdit(E.addSibling(last, id)), 'この要素の後ろに、同じ親の要素を足す');
+  }
+  if (n.isMember || n.parent) btn('削除', () => {
+    const x = E.remove(last, id);
+    if (x.error) { showEditError(x.error); return; }
+    const msg = `「${n.name}」${x.count > 1 ? `とその下の ${x.count - 1} 個の要素` : ''}を消しますか?${x.refs ? `\nほかの行から ${x.refs} か所で参照されています。消すと、その参照はエラーになります。` : ''}\n(Ctrl+Z で元に戻せます)`;
+    if (confirm(msg)) { selectedKey = null; selectedId = null; applyEdit(x); }
+  });
+  form.append(btns);
+  if (!can) form.append(el('div', 'small', debounce !== null ? '描き直しの途中です。' : 'テキストのエラーを直すと、図から編集できます。'));
+  editEl.append(form);
+}
+function showEditError(msg) {
+  let m = editEl.querySelector('.editerr');
+  if (!m) { m = el('div', 'editerr'); editEl.prepend(m); editEl.classList.add('on'); }
+  m.textContent = msg;
+}
+// 書き換えをテキスト欄に書き込む。変わった範囲だけを 1 回で置き換えるので、Ctrl+Z 1 回で戻せる
+let pendingField = null;  // 書きかけの欄({ inp, commit })
+let pendingReplay = null; // 書きかけを書き込んだ後に行う、クリックした操作
+document.addEventListener('pointerdown', (e) => {
+  if (!pendingField || pendingField.inp.contains(e.target)) return;
+  const btn = e.target.closest('#edit button');
+  const g = canvasEl.contains(e.target) ? e.target.closest('[data-id],[data-rel]') : null;
+  let action = null;
+  if (btn) action = { kind: 'button', label: btn.textContent };
+  else if (g?.hasAttribute('data-rel')) { const [a, b] = g.getAttribute('data-rel').split('|'); action = { kind: 'rel', keys: [a, b].map((x) => Plan.Edit.keyOf(Plan.Edit.find(last, x))) }; }
+  else if (g) { const n = Plan.Edit.find(last, g.getAttribute('data-id')); if (n) action = { kind: 'node', key: Plan.Edit.keyOf(n) }; }
+  const wrote = pendingField.commit({ keep: true });
+  if (wrote && action) pendingReplay = action;
+}, true);
+function replay() {
+  const a = pendingReplay;
+  pendingReplay = null;
+  if (!a || !last?.ok) return;
+  if (a.kind === 'button') { const b = [...editEl.querySelectorAll('button')].find((x) => x.textContent === a.label && !x.disabled); b?.click(); return; }
+  if (a.kind === 'rel') { const ids = a.keys.map((k) => Plan.Edit.locate(last, k)); if (ids.every(Boolean)) selectRel(ids.join('|')); return; }
+  const id = Plan.Edit.locate(last, a.key);
+  if (id) { select(id, true); const n = Plan.Edit.find(last, id); if (n) selectText(n.start, n.end); }
+}
+document.addEventListener('click', (e) => { if (pendingReplay) { e.stopPropagation(); e.preventDefault(); replay(); } }, true);
+document.addEventListener('pointerup', () => { if (pendingReplay) setTimeout(() => { if (pendingReplay) replay(); }, 0); }, true);
+let applying = false; // 書き込みの途中で、別の書き込みが入れ子に始まらないようにする
+// focus: パネルの欄から書き込んだとき、書き込んだ後に入力をどこへ戻すか({ focusLabel, move: -1|0|1, keep })。
+// 戻り値は、テキストを書き換えたかどうか
+function applyEdit(res, focus = null) {
+  if (!res || applying) return false;
+  if (res.error) { showEditError(res.error); return false; }
+  if (!editable()) { showEditError('いまは図から編集できません(テキストにエラーがあるか、描き直しの途中です)。'); return false; }
+  const old = srcEl.value, nt = res.text;
+  if (old === nt) return false;
+  let p = 0;
+  while (p < old.length && p < nt.length && old[p] === nt[p]) p++;
+  let q = 0;
+  while (q < old.length - p && q < nt.length - p && old[old.length - 1 - q] === nt[nt.length - 1 - q]) q++;
+  // サロゲートペア(絵文字・𠮷 など)の途中で切らない
+  const hi = (c) => c >= 0xd800 && c <= 0xdbff, lo = (c) => c >= 0xdc00 && c <= 0xdfff;
+  if (p > 0 && hi(old.charCodeAt(p - 1))) p--;
+  if (q > 0 && lo(old.charCodeAt(old.length - q))) q--;
+  const mid = nt.slice(p, nt.length - q);
+  const keepTop = srcEl.scrollTop;
+  applying = true;
+  try {
+  srcEl.focus();
+  srcEl.setSelectionRange(p, old.length - q);
+  const done = mid ? document.execCommand('insertText', false, mid) : document.execCommand('delete');
+  if (!done || srcEl.value !== nt) { srcEl.value = nt; } // execCommand が使えないブラウザでは直接書く(このときは Ctrl+Z で戻せない)
+  srcEl.scrollTop = keepTop;
+  } finally { applying = false; }
+  if (res.select !== undefined) { selectedKey = res.select; selectedRel = null; if (res.select === null) selectedId = null; }
+  updateHighlight();
+  clearTimeout(debounce); debounce = null;
+  analyze(); // 待たずに解析し直して描く(図とテキストを一致させる)
+  const id = selectedKey && last?.ok ? Plan.Edit.locate(last, selectedKey) : null;
+  const n = id && Plan.Edit.find(last, id);
+  if (n) { srcEl.setSelectionRange(n.nameStart, n.nameEnd); scrollToOffset(n.nameStart); }
+  // パネルから書き込んだときは、入力をパネルに戻す(テキスト欄に残すと、続けて打った文字が名前を上書きするため)
+  if (focus && !focus.keep) {
+    const labels = [...editEl.querySelectorAll('label')];
+    const i = labels.findIndex((l) => l.firstChild?.textContent === focus.focusLabel);
+    const j = i < 0 ? -1 : i + (focus.move ?? 0);
+    const target = j >= 0 && j < labels.length ? labels[j].querySelector('input,textarea') : editEl.querySelector('.btns button');
+    target?.focus();
+    if (target?.select) target.select();
+  } else if (focus?.keep) {
+    srcEl.blur();
+  } else if (n) selectText(n.nameStart, n.nameEnd);
+  return true;
+}
+function scrollToOffset(pos) {
+  const line = srcEl.value.slice(0, pos).split('\n').length;
+  srcEl.scrollTop = Math.max(0, (line - 4) * LINE_PX);
+  syncScroll();
+}
+
+// ---- ドラッグ: 対応の線を引く(FBS と PBS の対応)、依存の矢印を引く(アローダイアグラム)、日数を変える(ガントチャート)
+let drag = null;
+const svgPt = (svg, e) => { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
+const NS = 'http://www.w3.org/2000/svg';
+canvasEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !editable() || !canvasEl.contains(e.target)) return;
+  const svg = canvasEl.querySelector('svg');
+  if (!svg) return;
+  const view = viewKindEl.value;
+  const h = e.target.closest('[data-handle]');
+  if (h && view === 'gantt') {
+    drag = { kind: 'days', svg, id: h.getAttribute('data-handle'), days: +h.getAttribute('data-days'), dw: +h.getAttribute('data-dw'), x0: svgPt(svg, e).x, moved: false };
+  } else {
+    const g = e.target.closest('[data-id]');
+    if (!g || e.target.closest('[data-rel]')) return;
+    const id = g.getAttribute('data-id');
+    const n = Plan.Edit.find(last, id);
+    if (view === 'match' && n && !n.isMember) drag = { kind: 'rel', svg, id };
+    else if (view === 'aoa' && n && n.sec === 'WBS' && n.parent && !n.children.length) drag = { kind: 'dep', svg, id };
+    else return;
+    const p = svgPt(svg, e);
+    Object.assign(drag, { x0: p.x, y0: p.y, moved: false });
+  }
+  canvasEl.setPointerCapture?.(e.pointerId);
+});
+canvasEl.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const p = svgPt(drag.svg, e);
+  if (!drag.moved && Math.hypot(p.x - drag.x0, (p.y ?? 0) - (drag.y0 ?? p.y)) < 5) return;
+  drag.moved = true;
+  if (!drag.tmp) { drag.tmp = document.createElementNS(NS, 'g'); drag.tmp.setAttribute('pointer-events', 'none'); drag.svg.append(drag.tmp); }
+  if (drag.kind === 'days') {
+    // 0.5 日の倍数にそろえる(0.5 日以上)
+    const nd = Math.max(500, Math.round((drag.days + (p.x - drag.x0) / drag.dw * 1000) / 500) * 500);
+    drag.newDays = nd;
+    drag.tmp.innerHTML = `<rect x="${p.x + 8}" y="${p.y - 26}" width="96" height="22" rx="3" fill="#fff" stroke="#333"/><text x="${p.x + 14}" y="${p.y - 10}" font-size="13">日数: ${Plan.fmtDays(nd)} 日</text>`;
+  } else {
+    drag.tmp.innerHTML = `<path d="M${drag.x0} ${drag.y0}L${p.x} ${p.y}" stroke="#8b1a2b" stroke-width="2" stroke-dasharray="6 3" fill="none"/>`;
+  }
+});
+canvasEl.addEventListener('pointerup', (e) => {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  d.tmp?.remove(); // ドラッグ中の仮の表示を消す。結果はテキストに書き込み、図はテキストから描き直す
+  if (!d.moved) return;
+  dragged = true; // 直後のクリックを無視する。クリックが起きなかったときも残らないよう、すぐ外す
+  setTimeout(() => { dragged = false; }, 0);
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  if (!under || !canvasEl.contains(under)) return; // 図の外で離したら取り消す
+  if (d.kind === 'days') { if (d.newDays && d.newDays !== d.days) applyEdit(Plan.Edit.setDays(last, d.id, d.newDays)); return; }
+  const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-id]');
+  const to = hit && canvasEl.contains(hit) ? hit.getAttribute('data-id') : null;
+  if (!to || to === d.id) return;
+  if (d.kind === 'rel') applyEdit(Plan.Edit.addRealizes(last, d.id, to));
+  else applyEdit(Plan.Edit.addAfter(last, d.id, to));
+});
+canvasEl.addEventListener('pointercancel', () => { drag?.tmp?.remove(); drag = null; });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drag) { drag.tmp?.remove(); drag = null; } }); // Escape でドラッグを取り消す
 function selectText(start, end) {
   srcEl.focus();
   srcEl.setSelectionRange(start, end);
@@ -1366,8 +1913,8 @@ srcEl.addEventListener('input', () => {
 srcEl.addEventListener('keydown', (e) => {
   if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault();
-    srcEl.setRangeText('  ', srcEl.selectionStart, srcEl.selectionEnd, 'end');
-    srcEl.dispatchEvent(new Event('input'));
+    // 元に戻す履歴に載る書き方で入れる(setRangeText は履歴に載らず、それまでの履歴も使えなくなる)
+    if (!document.execCommand('insertText', false, '  ')) { srcEl.setRangeText('  ', srcEl.selectionStart, srcEl.selectionEnd, 'end'); srcEl.dispatchEvent(new Event('input')); }
   }
 });
 function setText(text, base) {
