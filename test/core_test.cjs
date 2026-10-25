@@ -598,7 +598,7 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
   const x1 = /<path d="M([\d.]+) [\d.]+V[\d.]+" stroke="#333" stroke-width="2"\/>/.exec(g1);
   // 棒の右端のつまみ(x = 目盛りの左端 + 終わり × 1 日の幅 − 4)から目盛りの左端を求め、今日の線が今日の列の始まりにあるか確かめる
   const t0 = r.tasks.find((x) => x.days > 0);
-  const hx = new RegExp(`data-handle="${t0.id}" data-days="\\d+" data-dw="24" x="([\\d.]+)"`).exec(g1);
+  const hx = new RegExp(`data-handle="${t0.id}" data-days="\\d+" data-dw="24" data-gx="[\\d.]+" x="([\\d.]+)"`).exec(g1);
   const gx = +hx[1] + 4 - t0.f / 1000 * 24;
   ok(x1 && Math.abs(+x1[1] - (gx + (dn - r.sched.start) * 24)) < 1e-6, `今日の線の位置: ${x1 && x1[1]} / ${gx + (dn - r.sched.start) * 24}`);
   // 範囲の外の今日: 線は引かないが、遅れは出す
@@ -666,7 +666,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
 {
   const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
   const r = P.analyze(t);
-  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match mop wbs aoa roles gantt', 'ビューの並び');
+  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match wbs aoa roles gantt mop', 'ビューの並び');
   const g = P.render(r, 'mop').svg;
   const boxes = [...g.matchAll(/data-mop="(n\d+)\|(\d+)" data-checked="([01])"/g)];
   const all = r.bySec.FBS.flatMap((n) => n.mops.map((m, i) => `${n.id}|${i}|${n.mopChecked[i] ? 1 : 0}`));
@@ -749,6 +749,23 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
     ok(x.text.split('\n')[5] === '- b mop: w', 'ほかの行が変わった');
   }
   console.log(`MOP の欄の書き換え: 試行 ${tries}、書き込み ${wrote}`);
+}
+// ---- ガントチャートの期間の上限、休みを除いた作業の長さ、修正依頼の文(仕様書 7.5 節・11.3 節・10 章)
+{
+  const g = (end, days) => P.render(P.analyze(`start: 2026-04-23\n${end ? `end: ${end}\n` : ''}members:\n- A\nWBS: X\n- a by: A days: ${days}\n`), 'gantt');
+  const big = g('2126-04-23', 1);
+  ok(big.svg === null && /36525 日あり、描ける長さ\(1096 日。約 3 年\)を超える/.test(big.message), `期間が長すぎるときの表示: ${big.message}`);
+  ok(g(null, 1096).svg !== null && g(null, 1097).svg === null, '期間の上限の境目(1096 日は描き、1097 日は描かない)');
+  ok(g('2029-04-22', 1).svg !== null && g('2029-04-23', 1).svg === null, 'end: による期間の上限の境目');
+  // 2026-05-01 は金曜。土日が休み、担当者は 5/5 が休み
+  const w = P.analyze('start: 2026-05-01\noff: sat, sun\nmembers:\n- A off: 2026-05-05\nWBS: X\n- a by: A days: 1\n');
+  const t = task(w, 'a');
+  ok(P.workUntil(w, t, 1000) === 1000 && P.workUntil(w, t, 3000) === 1000 && P.workUntil(w, t, 4000) === 2000 && P.workUntil(w, t, 3500) === 1500, '休みを除いた長さ(土日)');
+  ok(P.workUntil(w, t, 5000) === 2000 && P.workUntil(w, t, 6000) === 3000 && P.workUntil(w, t, 6500) === 3500, '休みを除いた長さ(担当者の休み)');
+  ok(P.workUntil(w, t, 500) === 500 && P.workUntil(w, t, -1000) === 0, '始まりより前・途中');
+  ok(/data-gx="[\d.]+"/.test(P.render(w, 'gantt').svg), 'つまみに目盛りの左端の位置がない');
+  const pr = P.toPrompt([], 'x');
+  ok(['off:(その人の休み)', '// から行末までは注', '「* 」「+ 」で始まるリスト', '__init__.py'].every((k) => pr.includes(k)), '修正依頼の文の書き方の要点');
 }
 // ---- SVG の埋め込みと取り出し
 {
