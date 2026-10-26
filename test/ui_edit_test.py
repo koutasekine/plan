@@ -589,6 +589,36 @@ async def main():
         d = await dl.value
         check(d.suggested_filename == 'mine.plan' and (await pn.inner_text('#fileName')) == 'mine.plan', 'ファイル操作機能がないときの上書き保存は同じ名前でダウンロード')
         await pn.close()
+        # 印刷 / PDF: サマリー → 残りのビューを選択欄の順に、描けるものを 1 ページに 1 つずつ。図のほかには何も足さない
+        pp = await b.new_page(viewport={'width':1400,'height':900})
+        pdlg = []
+        pp.on('dialog', lambda d: (pdlg.append(d.message), asyncio.ensure_future(d.accept())))
+        await pp.add_init_script("window.print = () => { window.__printed = (window.__printed || 0) + 1; };")
+        await pp.goto('file://'+str((pathlib.Path(__file__).resolve().parent.parent / 'index.html')))
+        await pp.click('#btnSample'); await pp.wait_for_timeout(300)
+        await pp.click('#btnPrint'); await pp.wait_for_timeout(200)
+        views = await pp.evaluate("() => [...document.querySelectorAll('#printArea .page')].map(p => p.dataset.view).join(' ')")
+        check(views == 'summary fbs pbs match wbs aoa roles gantt people mop' and await pp.evaluate("() => window.__printed") == 1, f'印刷するビューの並び: {views}')
+        check(await pp.evaluate("() => [...document.querySelectorAll('#printArea .page')].every(p => p.children.length === 1 && p.firstElementChild.tagName === 'svg' && p.textContent === p.firstElementChild.textContent)"), '各ページには図だけを入れる')
+        await pp.emulate_media(media='print')
+        import re
+        pdf = await pp.pdf(prefer_css_page_size=True)
+        check(len(re.findall(rb'/Type\s*/Page[^s]', pdf)) == 10, '印刷すると 1 ビュー 1 ページ(10 ページ)')
+        await pp.emulate_media(media='screen')
+        await pp.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
+        check(await pp.evaluate("() => document.querySelector('#printArea').children.length") == 0, '印刷の後は印刷用の図を片付ける')
+        # FBS のない計画では、FBS を使うビューを飛ばす
+        await pp.evaluate("() => { const s = document.querySelector('#src'); s.value = 'start: 2026-04-23\\nmembers:\\n- A\\nWBS: W\\n- t by: A days: 1\\n'; s.dispatchEvent(new Event('input')); }")
+        await pp.wait_for_timeout(400)
+        await pp.click('#btnPrint'); await pp.wait_for_timeout(200)
+        check(await pp.evaluate("() => [...document.querySelectorAll('#printArea .page')].map(p => p.dataset.view).join(' ')") == 'summary wbs aoa roles gantt people', '必要な節がないビューは飛ばす')
+        # エラーのあるテキストは印刷しない
+        await pp.evaluate("() => { const s = document.querySelector('#src'); s.value = '# x'; s.dispatchEvent(new Event('input')); }")
+        await pp.wait_for_timeout(400)
+        n0 = await pp.evaluate("() => window.__printed")
+        await pp.click('#btnPrint'); await pp.wait_for_timeout(200)
+        check(await pp.evaluate("() => window.__printed") == n0 and any('エラー' in m for m in pdlg), 'エラーのあるテキストは印刷せず、知らせる')
+        await pp.close()
         check(not errs, f'ページのエラー: {errs}')
         # 日付が変わってから描き直しの前に保存しても、保存する図は今日の日付で描き直したもの
         pg2 = await b.new_page(viewport={'width':1600,'height':1000})
