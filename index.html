@@ -96,6 +96,9 @@ dialog code{background:#f6f6f2;padding:0 3px}
 #drop.on{display:flex}
 .small{font-size:12px;color:#666}
 #warn{color:var(--err);font-size:12px}
+.fname{font-size:13px;color:#444;max-width:18em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stat{font-size:12px;color:#2a6b2a}
+button:disabled{opacity:.5;cursor:default}
 footer{font-size:11px;color:#777;padding:3px 10px;border-top:1px solid var(--line);background:var(--panel)}
 footer a{color:#777}
 </style>
@@ -104,13 +107,16 @@ footer a{color:#777}
 <header>
   <h1>プロジェクト計画</h1>
   <button id="btnNew">新規</button>
-  <label class="btn">開く<input type="file" id="fileOpen" accept=".plan,.txt,.svg" style="display:none"></label>
-  <select id="saveAs">
-    <option value="">保存…</option>
-    <option value="plan">テキスト(.plan)</option>
-    <option value="svg">SVG(テキストを埋め込む)</option>
+  <button id="btnOpen" title="テキスト(.plan・.txt)か、プロジェクト計画で保存した SVG を開く">開く</button><input type="file" id="fileOpen" accept=".plan,.txt,.svg" style="display:none">
+  <button id="btnSave" title="開いているファイルに上書き保存(Ctrl+S。まだファイルがないときは保存先を選ぶ)">上書き保存</button>
+  <button id="btnSaveAs" title="保存先とファイル名を選んでテキスト(.plan)を保存">別名で保存</button>
+  <select id="exportImg" title="表示中のビューを画像で保存(SVG はテキストを埋め込むので、このアプリで開き直せる)">
+    <option value="">画像…</option>
+    <option value="svg" title="テキストを埋め込むので、このアプリで開き直せる">SVG</option>
     <option value="png">PNG</option>
   </select>
+  <span id="fileName" class="fname"></span>
+  <span id="stat" class="stat" role="status"></span>
   <label>ビュー <select id="viewKind"></select></label>
   <span id="warn" role="status"></span>
   <span class="sp"></span>
@@ -1739,7 +1745,7 @@ if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
 const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop: 終了が開始より前なら登録できない\n  - 場所の設定 mop*: 場所を 100 文字まで登録できる\n- 通知\n  - 登録確認メール mop: 予定の登録から 1 分以内にメールが届く\n  - リマインドメール mop: 予定の 30 分前にメールが届く\n- 予定の共有\n  - アカウント登録 mop*: メールアドレスとパスワードで登録できる\n  - 共有ユーザの選択 mop: 登録済みのユーザを 5 人まで選べる\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「保存…」でファイルに保存してください。</p>\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -1751,7 +1757,11 @@ let last = null;          // 最後の解析の結果
 let lastOk = null;        // 最後にエラーなく解析できた結果(エラーの間にビューを切り替えたとき、薄く描くのに使う)
 let shownSvg = null;      // いま表示している図
 let selectedId = null;
-let fileBase = 'plan';
+let fileBase = 'plan';    // 画像を保存するときの名前のもと(拡張子なし)
+let fileName = '';        // 開いている・保存したテキストのファイル名(なければ空)
+let fileHandle = null;    // 上書き保存の先(Chrome・Edge のファイル操作機能。開き直すと忘れる)
+let dirty = false;        // 保存していない変更があるか
+let editGen = 0;          // 編集の世代(保存の書き込み中に編集されたかを見分ける)
 let opening = true;
 let debounce = null;
 
@@ -2100,6 +2110,7 @@ function applyEdit(res, focus = null) {
   } finally { applying = false; }
   if (res.select !== undefined) { selectedKey = res.select; selectedRel = null; if (res.select === null) selectedId = null; }
   updateHighlight();
+  edited();
   persist();
   clearTimeout(debounce); debounce = null;
   analyze(); // 待たずに解析し直して描く(図とテキストを一致させる)
@@ -2202,8 +2213,8 @@ const WARN = { save: '', tab: '' };
 const setWarn = (kind, t) => { WARN[kind] = t; warnEl.textContent = [WARN.save, WARN.tab].filter(Boolean).join(' / '); };
 function persist() {
   let ok = true;
-  try { localStorage.setItem(KEY_DOC, JSON.stringify({ text: srcEl.value, base: fileBase })); } catch { ok = false; }
-  setWarn('save', ok ? '' : 'ブラウザへの自動保持に失敗しました。「保存…」でテキスト(.plan)に残してください');
+  try { localStorage.setItem(KEY_DOC, JSON.stringify({ text: srcEl.value, base: fileBase, name: fileName, dirty })); } catch { ok = false; }
+  setWarn('save', ok ? '' : 'ブラウザへの自動保持に失敗しました。「上書き保存」か「別名で保存」でファイルに残してください');
 }
 function restored() {
   try { const d = JSON.parse(localStorage.getItem(KEY_DOC) ?? 'null'); return d && typeof d.text === 'string' ? d : null; } catch { return null; }
@@ -2214,6 +2225,7 @@ window.addEventListener('storage', (e) => { if (e.key === KEY_DOC && e.newValue 
 // ---- テキスト欄
 srcEl.addEventListener('input', () => {
   updateHighlight();
+  edited();
   persist();
   clearTimeout(debounce);
   debounce = setTimeout(() => { debounce = null; analyze(); }, 250);
@@ -2225,29 +2237,34 @@ srcEl.addEventListener('keydown', (e) => {
     if (!document.execCommand('insertText', false, '  ')) { srcEl.setRangeText('  ', srcEl.selectionStart, srcEl.selectionEnd, 'end'); srcEl.dispatchEvent(new Event('input')); }
   }
 });
-function setText(text, base, save) {
+// テキストを入れ替える(新規・開く・例・開き直したときの続き)。o: { name, handle, dirty, save }
+function setText(text, base, o = {}) {
   srcEl.value = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   if (base) fileBase = base;
+  editGen++;
+  fileName = o.name ?? '';
+  fileHandle = o.handle ?? null;
+  dirty = !!o.dirty;
+  showName();
   selectedId = null;
   opening = true;
   lastOk = null;
   canvasEl.textContent = '';
   updateHighlight();
-  if (save !== false) persist();
+  if (o.save !== false) persist();
   analyze();
 }
 viewKindEl.addEventListener('change', () => { selectedId = null; draw(); });
 
 // ---- 保存
 function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
-$('#saveAs').addEventListener('change', () => {
-  const v = $('#saveAs').value; $('#saveAs').value = '';
+$('#exportImg').addEventListener('change', () => {
+  const v = $('#exportImg').value; $('#exportImg').value = '';
   if (!v) return;
   // 描き直しが残っていれば、先に描き直す(図と埋め込むテキストを食い違わせないため)
   if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
   // 日付が変わっていれば、今日の線と遅れの印を描き直してから保存する
   if (todayStr() !== drawnToday && last?.ok) draw();
-  if (v === 'plan') { download(`${fileBase}.plan`, new Blob([srcEl.value], { type: 'text/plain;charset=utf-8' })); return; }
   const svg = !viewEl.classList.contains('stale') && shownSvg;
   if (!svg) { alert('保存できる図がありません(エラーを直すか、描けるビューを選んでください)'); return; }
   const base = `${fileBase}_${viewKindEl.value}`;
@@ -2271,10 +2288,22 @@ $('#saveAs').addEventListener('change', () => {
   }
 });
 
-// ---- 開く(「開く」とドラッグ・アンド・ドロップ)
-function openFile(file) {
+// ---- テキストのファイル: 新規・開く・上書き保存・別名で保存(仕様書 9 章。シンプルスライドと同じ作り)
+// Chrome・Edge はファイル操作機能で、開いたファイルにそのまま上書きする。ない場合はダウンロードで保存する
+const FS_OK = typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
+const PICK_OPEN = { types: [{ description: 'プロジェクト計画のテキスト・テキストを埋め込んだ SVG', accept: { 'text/plain': ['.plan', '.txt'], 'image/svg+xml': ['.svg'] } }] };
+const PICK_SAVE = { types: [{ description: 'プロジェクト計画のテキスト', accept: { 'text/plain': ['.plan'] } }] };
+let statT = null, saving = false;
+function setStat(t) { const e = $('#stat'); e.textContent = t; clearTimeout(statT); if (t) statT = setTimeout(() => { e.textContent = ''; }, 4000); }
+function showName() { const e = $('#fileName'); e.textContent = `${fileName || '(名前なし)'}${dirty ? ' *' : ''}`; e.title = dirty ? '保存していない変更があります' : ''; }
+function edited() { editGen++; if (!dirty) { dirty = true; showName(); } }
+function setDirty(v) { dirty = v; showName(); persist(); }
+const okToDiscard = () => !dirty || srcEl.value.trim() === '' || confirm('保存していない変更があります。破棄して続けますか?');
+const stamp = () => { const d = new Date(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const baseOf = (name) => name.replace(/\.[^.]*$/, '') || 'plan';
+
+function openFile(file, handle, handleP) {
   const isSvg = /\.svg$/i.test(file.name);
-  const base = file.name.replace(/\.[^.]*$/, '') || 'plan';
   if (!isSvg && !/\.(plan|txt)$/i.test(file.name)) { alert(`${file.name} は開けません。開けるのは .plan(.txt)と、プロジェクト計画で保存した .svg です。`); return; }
   const r = new FileReader();
   r.onload = () => {
@@ -2282,19 +2311,93 @@ function openFile(file) {
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(r.result)); }
     catch { alert(`${file.name}: UTF-8 として読めません`); return; }
     if (isSvg) { const x = Plan.extractSource(text); if (!x.ok) { alert(`${file.name}: ${x.error}`); return; } text = x.text; }
-    setText(text, base.replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt)$/, ''));
+    // SVG は表示中のビュー 1 つ分の画像なので、テキストの保存先にしない(上書き保存では .plan の保存先を尋ねる)
+    setText(text, baseOf(file.name).replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt)$/, ''), isSvg ? {} : { name: file.name, handle });
+    // ドロップで開いたときは、上書きの先を後から受け取る(受け取る前に編集や別のファイルに替わっていれば使わない)
+    const g = editGen;
+    if (handleP && !isSvg) handleP.then((h) => { if (h?.kind === 'file' && editGen === g) fileHandle = h; }).catch(() => {});
   };
   r.onerror = () => alert(`${file.name} を読めませんでした`);
   r.readAsArrayBuffer(file);
 }
-$('#fileOpen').addEventListener('change', (e) => { if (e.target.files[0]) openFile(e.target.files[0]); e.target.value = ''; });
+$('#btnOpen').addEventListener('click', async () => {
+  if (!okToDiscard()) return;
+  if (!FS_OK) { $('#fileOpen').click(); return; }
+  try { const [h] = await window.showOpenFilePicker(PICK_OPEN); openFile(await h.getFile(), h); }
+  catch (e) { if (e?.name !== 'AbortError') $('#fileOpen').click(); }
+});
+$('#fileOpen').addEventListener('change', (e) => { if (e.target.files[0]) openFile(e.target.files[0], null); e.target.value = ''; });
 ['dragenter', 'dragover'].forEach((ev) => window.addEventListener(ev, (e) => { e.preventDefault(); $('#drop').classList.add('on'); }));
 ['dragleave', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'drop' || e.relatedTarget === null) $('#drop').classList.remove('on'); }));
-window.addEventListener('drop', (e) => { const f = e.dataTransfer.files[0]; if (f) openFile(f); });
+window.addEventListener('drop', (e) => {
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  // 上書きの先にするため、ファイルの扱いを受け取る(Chrome・Edge。ドロップの処理の中で呼ぶ必要がある)
+  const it = e.dataTransfer.items?.[0];
+  const hp = it && typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle() : null;
+  if (!okToDiscard()) return;
+  openFile(f, null, hp);
+});
+function downloadText(name) { download(name, new Blob([srcEl.value], { type: 'text/plain;charset=utf-8' })); }
+async function writeTo(h, text) { const w = await h.createWritable(); await w.write(text); await w.close(); }
+function setSaving(v) { saving = v; $('#btnSave').disabled = v; $('#btnSaveAs').disabled = v; }
+// 書き込みを始めたときの編集の世代と比べ、書き込み中に編集されていれば「未保存」のままにする
+function savedAt(gen, msg) {
+  if (editGen === gen) { setDirty(false); setStat(msg); } else setStat(`${msg}。保存中に変わった内容はまだ保存されていません`);
+}
+async function saveAs() {
+  if (saving) return;
+  if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
+  if (FS_OK) {
+    let h;
+    try { h = await window.showSaveFilePicker({ suggestedName: fileName || `${fileBase}.plan`, ...PICK_SAVE }); }
+    catch (e) { if (e?.name === 'AbortError') return; h = null; }
+    if (h) {
+      const gen = editGen, text = srcEl.value;
+      setSaving(true);
+      try {
+        await writeTo(h, text);
+        // 書き込み中に「開く」「新規」などで別の内容に替わったときは、今の内容の保存先は変えない
+        if (editGen === gen) { fileHandle = h; fileName = h.name; fileBase = baseOf(h.name); }
+        savedAt(gen, `${h.name} に保存しました(${stamp()})`);
+        return;
+      } catch { setStat('保存先に書き込めなかったので、ダウンロードで保存しました'); }
+      finally { setSaving(false); }
+    } else setStat('保存先を選べなかったので、ダウンロードで保存しました');
+  }
+  let name = prompt('ファイル名', fileName || `${fileBase}.plan`);
+  if (name === null) return;
+  name = name.trim() || `${fileBase}.plan`;
+  if (!/\.(plan|txt)$/i.test(name)) name += '.plan';
+  downloadText(name);
+  fileName = name; fileBase = baseOf(name);
+  setDirty(false);
+}
+async function save() {
+  if (saving) return;
+  if (FS_OK && fileHandle) {
+    const gen = editGen, text = srcEl.value, h = fileHandle;
+    setSaving(true);
+    try { await writeTo(h, text); savedAt(gen, `${h.name} に上書き保存しました(${stamp()})`); }
+    catch (e) { if (e?.name !== 'AbortError') setStat('上書きできませんでした。「別名で保存」を使ってください'); }
+    finally { setSaving(false); }
+    return;
+  }
+  if (FS_OK || !fileName) { saveAs(); return; }
+  // ファイル操作機能がないブラウザ: 同じ名前でダウンロードする
+  downloadText(fileName);
+  setDirty(false);
+}
+$('#btnSave').addEventListener('click', save);
+$('#btnSaveAs').addEventListener('click', saveAs);
+// Ctrl+S(Mac では ⌘S)で上書き保存
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+});
 
 // ---- 上の帯のボタン
-$('#btnNew').addEventListener('click', () => { if (srcEl.value.trim() === '' || confirm('書いている内容を消して新規作成しますか?')) setText('', 'plan'); });
-$('#btnSample').addEventListener('click', () => { if (srcEl.value.trim() === '' || confirm('書いている内容を例で置き換えますか?')) setText(SAMPLE_TEXT, 'sample'); });
+$('#btnNew').addEventListener('click', () => { if (okToDiscard()) setText('', 'plan'); });
+$('#btnSample').addEventListener('click', () => { if (okToDiscard()) setText(SAMPLE_TEXT, 'sample'); });
 $('#btnHelp').addEventListener('click', () => { const d = $('#dlgHelp'); d.innerHTML = HELP_HTML; d.showModal(); });
 document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (e) => { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close(); }));
 
@@ -2323,7 +2426,8 @@ setInterval(() => {
 }, 60000);
 
 // 開いたときは、前に編集していた内容を続ける(なければ空)
-{ const d = restored(); setText(d ? d.text : '', d && typeof d.base === 'string' && d.base ? d.base : 'plan', false); }
+// 上書きの先は覚えていないので、次の上書き保存では保存先を尋ねる(シンプルスライドと同じ)
+{ const d = restored(); setText(d ? d.text : '', d && typeof d.base === 'string' && d.base ? d.base : 'plan', { name: d && typeof d.name === 'string' ? d.name : '', dirty: !!d?.dirty, save: false }); }
 })();
 </script>
 </body>

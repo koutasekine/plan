@@ -399,6 +399,94 @@ async def main():
         check('自動保持に失敗' in await pg.inner_text('#warn'), '保持に失敗すると上部に警告が出る')
         await pg.reload(); await pg.wait_for_timeout(500)
         check(await pg.inner_text('#warn') == '', '開き直すと警告は消える')
+        # 12. テキストのファイル: 開く・上書き保存・別名で保存・Ctrl+S・未保存の印(ファイル操作機能は偽物に差し替える)
+        FAKE_FS = """(() => {
+          window.__files = {}; window.__picks = []; window.__saveName = null; window.__delay = null;
+          const mk = (name) => ({ kind: 'file', name,
+            getFile: async () => new File([window.__files[name] ?? ''], name),
+            createWritable: async () => { let buf = ''; return { write: async (t) => { buf = t; if (window.__delay) await window.__delay; }, close: async () => { window.__files[name] = buf; } }; } });
+          window.showOpenFilePicker = async () => { window.__picks.push('open'); return [mk(window.__openName)]; };
+          window.showSaveFilePicker = async (o) => { window.__picks.push('save:' + o.suggestedName); return mk(window.__saveName ?? o.suggestedName); };
+        })();"""
+        pf = await b.new_page(viewport={'width':1600,'height':1000})
+        dlg = []
+        pf.on('dialog', lambda d: (dlg.append(d.message), asyncio.ensure_future(d.accept())))
+        pf.on('pageerror', lambda e: errs.append(str(e)))
+        await pf.add_init_script(FAKE_FS)
+        await pf.goto('file://'+str((pathlib.Path(__file__).resolve().parent.parent / 'index.html')))
+        name = lambda: pf.inner_text('#fileName')
+        check(await name() == '(名前なし)', '最初はファイル名なし')
+        await pf.evaluate("(t) => { window.__files['a.plan'] = t; window.__openName = 'a.plan'; }", orig)
+        await pf.click('#btnOpen'); await pf.wait_for_timeout(300)
+        check(await pf.input_value('#src') == orig and await name() == 'a.plan', '開くでファイルを読み、名前を出す')
+        await pf.focus('#src'); await pf.keyboard.press('End'); await pf.keyboard.type('// x'); await pf.wait_for_timeout(300)
+        check(await name() == 'a.plan *', '編集すると * が付く')
+        await pf.keyboard.press('Control+s'); await pf.wait_for_timeout(200)
+        check(await pf.evaluate("() => window.__files['a.plan']") == await pf.input_value('#src') and await name() == 'a.plan', 'Ctrl+S で開いたファイルに上書きし、* が消える')
+        check('a.plan に上書き保存しました' in await pf.inner_text('#stat'), '上書き保存したことを表示する')
+        check(await pf.evaluate("() => window.__picks.join(',')") == 'open', '上書き保存では保存先を尋ねない')
+        # 図からの編集でも * が付き、上書き保存で消える
+        await pf.select_option('#viewKind','gantt'); await pf.wait_for_timeout(200)
+        await pf.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+        await pf.locator('#edit label:has-text("状態") select').select_option('doing'); await pf.wait_for_timeout(200)
+        check(await name() == 'a.plan *', '図からの編集でも * が付く')
+        await pf.click('#btnSave'); await pf.wait_for_timeout(200)
+        check('status: doing' in await pf.evaluate("() => window.__files['a.plan']") and await name() == 'a.plan', '上書き保存ボタン')
+        # 別名で保存: 保存先を尋ね、以後の上書き保存はそのファイルへ
+        await pf.evaluate("() => { window.__saveName = 'b.plan'; }")
+        await pf.click('#btnSaveAs'); await pf.wait_for_timeout(200)
+        check(await name() == 'b.plan' and await pf.evaluate("() => window.__files['b.plan']") == await pf.input_value('#src'), '別名で保存')
+        check(await pf.evaluate("() => window.__picks[window.__picks.length - 1]") == 'save:a.plan', '別名で保存の名前の候補は今のファイル名')
+        await pf.focus('#src'); await pf.keyboard.press('Control+End'); await pf.keyboard.type('QQ'); await pf.wait_for_timeout(300)
+        await pf.click('#btnSave'); await pf.wait_for_timeout(200)
+        check(await pf.evaluate("() => window.__files['b.plan']") == await pf.input_value('#src') and 'QQ' in await pf.input_value('#src') and 'QQ' not in await pf.evaluate("() => window.__files['a.plan']"), '別名で保存の後の上書き保存は新しいファイルへ')
+        # 保存の書き込み中に編集したら、* を残す
+        await pf.evaluate("() => { window.__delay = new Promise((r) => { window.__release = r; }); }")
+        await pf.click('#btnSave'); await pf.wait_for_timeout(100)
+        check(await pf.evaluate("() => document.querySelector('#btnSave').disabled"), '書き込み中は保存ボタンを押せない')
+        await pf.focus('#src'); await pf.keyboard.press('End'); await pf.keyboard.type('y'); await pf.wait_for_timeout(100)
+        await pf.evaluate("() => { window.__delay = null; window.__release(); }"); await pf.wait_for_timeout(200)
+        check(await name() == 'b.plan *' and '保存中に変わった内容はまだ保存されていません' in await pf.inner_text('#stat'), '書き込み中に編集したら * を残す')
+        # 未保存のときの新規は確認を出す。保存済みなら出さない
+        n0 = len(dlg)
+        await pf.click('#btnNew'); await pf.wait_for_timeout(200)
+        check(len(dlg) == n0 + 1 and '保存していない変更があります' in dlg[-1] and await pf.input_value('#src') == '', '未保存のときの新規は確認を出す')
+        await pf.click('#btnSample'); await pf.wait_for_timeout(300)
+        check(len(dlg) == n0 + 1, '保存していない変更がなければ確認を出さない')
+        # 開き直すと、ファイル名と * は残るが、上書きの先は忘れる(次の上書き保存では保存先を尋ねる)
+        await pf.evaluate("(t) => { window.__files['c.plan'] = t; window.__openName = 'c.plan'; }", orig)
+        await pf.click('#btnOpen'); await pf.wait_for_timeout(300)
+        await pf.focus('#src'); await pf.keyboard.press('End'); await pf.keyboard.type('z'); await pf.wait_for_timeout(300)
+        await pf.reload(); await pf.wait_for_timeout(500)
+        check(await name() == 'c.plan *', '開き直してもファイル名と * が残る')
+        await pf.evaluate("() => { window.__saveName = null; }")
+        await pf.click('#btnSave'); await pf.wait_for_timeout(200)
+        check(await pf.evaluate("() => window.__picks.join(',')") == 'save:c.plan', '開き直した後の上書き保存は保存先を尋ねる')
+        # SVG を開いたときは、上書き保存で .plan の保存先を尋ねる
+        svgtext = await pf.evaluate("(t) => Plan.embedSource(Plan.render(Plan.analyze(t), 'gantt').svg, t)", orig)
+        await pf.evaluate("(s) => { window.__files['k_gantt.svg'] = s; window.__openName = 'k_gantt.svg'; window.__picks = []; }", svgtext)
+        await pf.click('#btnOpen'); await pf.wait_for_timeout(300)
+        check(await pf.input_value('#src') == orig and await name() == '(名前なし)', 'SVG を開くとテキストを取り出し、ファイル名は付けない')
+        await pf.click('#btnSave'); await pf.wait_for_timeout(200)
+        check(await pf.evaluate("() => window.__picks.join(',')") == 'open,save:k.plan' and await pf.evaluate("() => window.__files['k_gantt.svg']") == svgtext, 'SVG を開いた後の上書き保存は .plan の保存先を尋ね、SVG は書き換えない')
+        await pf.close()
+        # ファイル操作機能がないブラウザ: 別名で保存はファイル名を尋ねてダウンロード、上書き保存は同じ名前でダウンロード
+        pn = await b.new_page(viewport={'width':1600,'height':1000})
+        pn.on('dialog', lambda d: asyncio.ensure_future(d.accept('mine') if d.type == 'prompt' else d.accept()))
+        await pn.add_init_script("delete window.showOpenFilePicker; delete window.showSaveFilePicker;")
+        await pn.goto('file://'+str((pathlib.Path(__file__).resolve().parent.parent / 'index.html')))
+        await pn.click('#btnSample'); await pn.wait_for_timeout(300)
+        async with pn.expect_download() as dl:
+            await pn.click('#btnSaveAs')
+        d = await dl.value
+        check(d.suggested_filename == 'mine.plan' and open(await d.path(), encoding='utf-8').read() == orig, f'ファイル操作機能がないときの別名で保存: {d.suggested_filename}')
+        check(await pn.inner_text('#fileName') == 'mine.plan', 'ダウンロードで保存した名前を出す')
+        await pn.focus('#src'); await pn.keyboard.press('End'); await pn.keyboard.type('q'); await pn.wait_for_timeout(300)
+        async with pn.expect_download() as dl:
+            await pn.keyboard.press('Control+s')
+        d = await dl.value
+        check(d.suggested_filename == 'mine.plan' and (await pn.inner_text('#fileName')) == 'mine.plan', 'ファイル操作機能がないときの上書き保存は同じ名前でダウンロード')
+        await pn.close()
         check(not errs, f'ページのエラー: {errs}')
         # 日付が変わってから描き直しの前に保存しても、保存する図は今日の日付で描き直したもの
         pg2 = await b.new_page(viewport={'width':1600,'height':1000})
@@ -409,7 +497,7 @@ async def main():
         check('今日(2026-04-30)' in await pg2.inner_html('#canvas'), '保存の前の図は 04-30')
         await pg2.clock.run_for(20000)
         async with pg2.expect_download() as dl:
-            await pg2.select_option('#saveAs', 'svg')
+            await pg2.select_option('#exportImg', 'svg')
         svg = open(await (await dl.value).path(), encoding='utf-8').read()
         check('今日(2026-05-01)' in svg and '今日(2026-04-30)' not in svg, '日付が変わった後の保存は、今日の日付で描き直した図')
         await pg2.close()
