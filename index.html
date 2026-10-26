@@ -102,14 +102,20 @@ dialog code{background:#f6f6f2;padding:0 3px}
 button:disabled{opacity:.5;cursor:default}
 footer{font-size:11px;color:#777;padding:3px 10px;border-top:1px solid var(--line);background:var(--panel)}
 footer a{color:#777}
-/* 印刷 / PDF: 描けるビューを 1 ページに 1 つずつ。紙の大きさは印刷の画面で選ぶ(横向き。A4 が既定で、A3 なども選べる) */
+/* 印刷 / PDF: 描けるビューを 1 ページに 1 つずつ。紙の大きさは印刷の画面で選ぶ(横向き。A4 が既定で、A3 なども選べる)。
+   ページの余白は 0 にする(ブラウザが日時・題名・アドレス・ページ番号を書く場所をなくすため。シンプルスライドと同じ)。図の周りの空きは、ページの内側に取る */
 #printArea{display:none}
 @media print{
-  @page{size:landscape;margin:10mm}
+  @page{size:landscape;margin:0}
+  /* サマリーと、分けたときのアローダイアグラムの作業の表は縦向き(名前付きページ)。横向きのページの高さは、縦向きのページの幅(100vw)とそろえる。
+     ページの大きさの基準(vw・vh)は最初のページ(縦向きのサマリー)で決まるため、そろえないと横向きの図がはみ出して白紙のページが挟まる */
+  @page portrait{size:portrait;margin:0}
+  #printArea .page[data-portrait]{page:portrait}
+  #printArea .page:not([data-portrait]){height:calc(100vw - 1px)}
   html,body{height:auto;overflow:visible;display:block;background:#fff}
   body>*:not(#printArea){display:none!important}
   #printArea{display:block}
-  #printArea .page{break-after:page;page-break-after:always;display:flex;align-items:flex-start;justify-content:center;height:calc(100vh - 1px);overflow:hidden}
+  #printArea .page{break-after:page;page-break-after:always;display:flex;align-items:flex-start;justify-content:center;box-sizing:border-box;height:calc(100vh - 1px);padding:10mm;overflow:hidden}
   #printArea .page:last-child{break-after:auto;page-break-after:auto}
   #printArea svg{max-width:100%;max-height:100%;width:auto;height:auto}
 }
@@ -718,8 +724,10 @@ const who = (r, list) => (list.length >= 2 && list.length === r.members.length ?
 
 // ---- 木(FBS・PBS・WBS。仕様書 7.1 節)
 // 子がすべて末端なら、子を親の下に縦に並べる(横に広がりすぎないため)。それ以外は横に並べる
-function renderTree(r, key) {
+// opt.keep: 描く要素の集合(印刷でページを分けるとき。根からその要素までの道と、その下を描く)
+function renderTree(r, key, opt = {}) {
   const root = r.sec[key].root;
+  const kids = (n) => (opt.keep ? n.children.filter((c) => opt.keep.has(c)) : n.children);
   const warned = new Set(r.checks.filter((c) => c.node.sec === key).map((c) => c.node));
   const FS = 13, SFS = 11, PADX = 10, PADY = 7, GAPX = 18, GAPY = 34, VIND = 22, VGAP = 10, MAXW = 200;
   const box = (n) => {
@@ -741,17 +749,17 @@ function renderTree(r, key) {
   const size = (n) => {
     const b = box(n);
     B.set(n, b);
-    if (!n.children.length) { b.tw = b.w; b.th = b.h; b.mode = 'leaf'; return; }
-    n.children.forEach(size);
-    if (n.children.every((c) => !c.children.length)) {
+    if (!kids(n).length) { b.tw = b.w; b.th = b.h; b.mode = 'leaf'; return; }
+    kids(n).forEach(size);
+    if (kids(n).every((c) => !kids(c).length)) {
       b.mode = 'v';
-      b.tw = Math.max(b.w, VIND + Math.max(...n.children.map((c) => B.get(c).tw)));
-      b.th = b.h + n.children.reduce((a, c) => a + VGAP + B.get(c).th, 0);
+      b.tw = Math.max(b.w, VIND + Math.max(...kids(n).map((c) => B.get(c).tw)));
+      b.th = b.h + kids(n).reduce((a, c) => a + VGAP + B.get(c).th, 0);
     } else {
       b.mode = 'h';
-      const cw = n.children.reduce((a, c) => a + B.get(c).tw, 0) + GAPX * (n.children.length - 1);
+      const cw = kids(n).reduce((a, c) => a + B.get(c).tw, 0) + GAPX * (kids(n).length - 1);
       b.tw = Math.max(b.w, cw);
-      b.th = b.h + GAPY + Math.max(...n.children.map((c) => B.get(c).th));
+      b.th = b.h + GAPY + Math.max(...kids(n).map((c) => B.get(c).th));
     }
   };
   size(root);
@@ -764,20 +772,20 @@ function renderTree(r, key) {
     if (b.mode === 'v') {
       let cy = y + b.h + VGAP;
       const lx = bx + 12;
-      for (const c of n.children) {
+      for (const c of kids(n)) {
         place(c, bx + VIND, cy);
         const cb = B.get(c);
         out.push(`<path d="M${lx} ${cy + cb.h / 2}H${bx + VIND}" fill="none" stroke="${COL.line}"/>`);
         cy += cb.th + VGAP;
       }
-      const lastC = B.get(n.children[n.children.length - 1]);
+      const lastC = B.get(kids(n)[kids(n).length - 1]);
       out.push(`<path d="M${lx} ${y + b.h}V${lastC.y + lastC.h / 2}" fill="none" stroke="${COL.line}"/>`);
     } else if (b.mode === 'h') {
-      const cw = n.children.reduce((a, c) => a + B.get(c).tw, 0) + GAPX * (n.children.length - 1);
+      const cw = kids(n).reduce((a, c) => a + B.get(c).tw, 0) + GAPX * (kids(n).length - 1);
       let cx = x + (b.tw - cw) / 2;
       const cy = y + b.h + GAPY;
       const mids = [];
-      for (const c of n.children) { place(c, cx, cy); const cb = B.get(c); mids.push(cb.x + cb.w / 2); cx += cb.tw + GAPX; }
+      for (const c of kids(n)) { place(c, cx, cy); const cb = B.get(c); mids.push(cb.x + cb.w / 2); cx += cb.tw + GAPX; }
       const pm = bx + b.w / 2, my = y + b.h + GAPY / 2;
       out.push(`<path d="M${pm} ${y + b.h}V${my}" fill="none" stroke="${COL.line}"/>`);
       out.push(`<path d="M${Math.min(pm, ...mids)} ${my}H${Math.max(pm, ...mids)}" fill="none" stroke="${COL.line}"/>`);
@@ -897,7 +905,8 @@ function buildAOA(tasks) {
   }
   return { events: live, arcs, rank, src, sink };
 }
-function renderAOA(r) {
+// opt.part: 'diagram' なら矢印の図だけ、'table' なら作業の表だけ(opt.rows でその範囲 [始め, 終わり))を描く(印刷でページを分けるとき)
+function renderAOA(r, opt = {}) {
   const tasks = r.tasks;
   const out = [];
   const M = 30, RX = 150, RY = 80, R = 15, TOP = 90;
@@ -966,17 +975,20 @@ function renderAOA(r) {
   for (const e of g.events) out.push(`<circle cx="${cx(e)}" cy="${cy(e)}" r="${R}" fill="#fff" stroke="${COL.line}" stroke-width="1.5"/>`);
   out.push(`<g pointer-events="none">${lbl.join('')}</g>`); // 文字はクリックを通す(矢印を選び・ドラッグできるように)
   const W = M * 2 + R * 2 + Math.max(...ranks) * RX;
+  const head0 = summaryText(r);
+  if (opt.part === 'diagram') return wrapSvg(Math.max(W, textW(head0[0], 13) + 2 * M), TOP + H + M, T_(M, 26, head0[0], { fs: 13, weight: '600' }) + T_(M, 46, head0[1], { fs: 11, fill: COL.sub }) + out.join(''));
   // 下に作業の表(管理番号・名前・日数・最早開始・最遅開始・余裕)
   const FS = 12, RH = 20;
   const cols = [['管理番号', 70], ['作業', 260], ['日数', 50], ['最早開始', 70], ['最遅開始', 70], ['余裕', 50]];
   const tw = cols.reduce((a, c) => a + c[1], 0);
-  let ty = TOP + H + 30;
+  let ty = opt.part === 'table' ? TOP - 30 : TOP + H + 30;
   const tbl = [];
   let x = M;
   tbl.push(`<rect x="${M}" y="${ty}" width="${tw}" height="${RH}" fill="${COL.head}" stroke="${COL.grid}"/>`);
   for (const [h, w] of cols) { tbl.push(T_(x + 5, ty + 14, h, { fs: FS, weight: '600' })); x += w; }
   ty += RH;
-  for (const t of [...tasks].sort((a, b) => a.order - b.order)) {
+  const sorted = [...tasks].sort((a, b) => a.order - b.order);
+  for (const t of opt.rows ? sorted.slice(opt.rows[0], opt.rows[1]) : sorted) {
     const cells = [t.num, clip(t.name, 250, FS), fmtDays(t.days), fmtDays(t.ES), fmtDays(t.LS), fmtDays(t.TF)];
     x = M;
     let row = `<rect x="${M}" y="${ty}" width="${tw}" height="${RH}" fill="#fff" stroke="${COL.grid}"/>`;
@@ -985,6 +997,7 @@ function renderAOA(r) {
     ty += RH;
   }
   const head = summaryText(r);
+  if (opt.part === 'table') return wrapSvg(Math.max(M + tw + M, textW(head[0], 13) + 2 * M), ty + M, T_(M, 26, head[0], { fs: 13, weight: '600' }) + tbl.join(''));
   const svgW = Math.max(W, M + tw + M, textW(head[0], 13) + 2 * M);
   return wrapSvg(svgW, ty + M, T_(M, 26, head[0], { fs: 13, weight: '600' }) + T_(M, 46, head[1], { fs: 11, fill: COL.sub }) + out.join('') + tbl.join(''));
 }
@@ -1007,10 +1020,11 @@ function wbsTable(r) {
   const taskW = Math.min(330, Math.max(120, ...tasks.map((t) => textW(`${t.num} ${t.name}`, FS) + 12)));
   return { levels, colW, taskW, FS, RH };
 }
+// o.rows: 描く作業の範囲 [始め, 終わり)(印刷で行を区切るとき)
 function drawWbsLeft(r, L, x0, y0, extraCols, o = {}) {
   const out = [];
   const { levels, colW, taskW, FS, RH } = L;
-  const tasks = r.tasks;
+  const tasks = o.rows ? r.tasks.slice(o.rows[0], o.rows[1]) : r.tasks;
   const rowOf = new Map(tasks.map((t, i) => [t, i]));
   // 途中の要素は、下の作業の行をまとめたセル
   for (const n of r.bySec.WBS) {
@@ -1019,7 +1033,9 @@ function drawWbsLeft(r, L, x0, y0, extraCols, o = {}) {
     const leaves = [];
     const walk = (x) => (x.children.length ? x.children.forEach(walk) : leaves.push(x));
     walk(n);
-    const r0 = Math.min(...leaves.map((t) => rowOf.get(t))), r1 = Math.max(...leaves.map((t) => rowOf.get(t)));
+    const inRows = leaves.filter((t) => rowOf.has(t));
+    if (!inRows.length) continue;
+    const r0 = Math.min(...inRows.map((t) => rowOf.get(t))), r1 = Math.max(...inRows.map((t) => rowOf.get(t)));
     let x = x0;
     for (let k = 1; k < lv; k++) x += colW[k - 1];
     const w = colW[lv - 1], y = y0 + r0 * RH, h = (r1 - r0 + 1) * RH;
@@ -1060,7 +1076,8 @@ function headerCells(L, x0, y0, h, extra) {
 // ---- テスト項目(MOP)の表(仕様書 7.6 節)
 // 左は FBS の階層(途中の要素は下の行をまとめたセル)。MOP 1 つにつき 1 行。MOP のない末端の要素は「(MOP なし)」の 1 行。
 // 途中の要素や根に書いた MOP は、その要素の「全体」の行にする
-function renderMop(r) {
+// opt.rows: 表の行の範囲 [始め, 終わり)(印刷で行を区切るとき)。件数の表示は全体のまま
+function renderMop(r, opt = {}) {
   const root = r.sec.FBS.root, F = r.bySec.FBS;
   const M = 20, TOP = 50, FS = 12, LH = FS * 1.35, PAD = 5, MINH = 22;
   const warned = new Set(r.checks.filter((c) => c.code === 'C3').map((c) => c.node));
@@ -1077,6 +1094,16 @@ function renderMop(r) {
     if (rows.length > r0) span.set(n, [r0, rows.length - 1]);
   };
   walk(root);
+  const allMops = rows.filter((x) => x.i >= 0);
+  const total0 = allMops.length, done0 = allMops.filter((x) => x.n.mopChecked[x.i]).length;
+  if (opt.rows) {
+    const keep = rows.slice(opt.rows[0], opt.rows[1]);
+    rows.length = 0; rows.push(...keep); own.clear(); span.clear();
+    rows.forEach((x, k) => {
+      const o = own.get(x.n); own.set(x.n, o ? [o[0], k] : [k, k]);
+      for (let a = x.n; a; a = a.parent) { const sp = span.get(a); span.set(a, sp ? [sp[0], k] : [k, k]); }
+    });
+  }
   const title = T_(M, 24, `テスト項目(MOP): ${root.name}`, { fs: 13, weight: '600' });
   if (!rows.length) return wrapSvg(420, 80, title + T_(M, 50, 'FBS に要素がありません', { fs: 12 }));
   const LV = Math.max(0, ...F.filter((n) => n.parent && n.children.length).map((n) => n.depth));
@@ -1119,7 +1146,6 @@ function renderMop(r) {
     const [a, b] = span.get(n), x = colX[n.depth - 1], w = colW[n.depth - 1], y = ry[a], h = ry[b + 1] - ry[a];
     out.push(`<g ${sel(n)}><title>${esc(r.qname(n))}</title>${cellRect(x, y, w, h, warned.has(n))}${cellText(x, y, w, h, n.name)}</g>`);
   }
-  let total = 0, done = 0;
   for (const [n, [a, b]] of own) {
     const lx = n.children.length || !n.parent ? colX[n.depth] ?? funX : colX[n.depth - 1];
     const y = ry[a], h = ry[b + 1] - ry[a], wn = warned.has(n);
@@ -1132,20 +1158,20 @@ function renderMop(r) {
       out.push(`<rect x="${chkX}" y="${yy}" width="${chkW}" height="${hh}" fill="#fff" stroke="${COL.grid}"/>`);
       if (i < 0) { out.push(`<g ${sel(n)}>${cellRect(mopX, yy, mopW, hh, wn)}${T_(mopX + PAD, yy + hh / 2 + 4, '(MOP なし)', { fs: FS, fill: COL.sub })}</g>`); continue; }
       const at = atts[i], ck = n.mopChecked[i];
-      total++; if (ck) done++;
       const lines = mopLines[k], sy = yy + hh / 2 - (lines.length - 1) * LH / 2 + 4;
       out.push(`<g data-id="${n.id}" data-start="${at.kstart}" data-end="${at.end}"><title>${esc(n.mops[i])}</title><rect x="${mopX}" y="${yy}" width="${mopW}" height="${hh}" fill="#fff" stroke="${COL.grid}"/>${lines.map((l, j) => T_(mopX + PAD, sy + j * LH, l, { fs: FS })).join('')}</g>`);
       const cx = chkX + chkW / 2, cy = yy + hh / 2;
       out.push(`<g data-mop="${n.id}|${i}" data-checked="${ck ? 1 : 0}"><title>${ck ? 'チェック済み(mop*:)。クリックで外す' : '未チェック(mop:)。クリックでチェック済みにする'}</title><rect x="${chkX + 1}" y="${yy + 1}" width="${chkW - 2}" height="${hh - 2}" fill="transparent"/><rect x="${cx - 7}" y="${cy - 7}" width="14" height="14" rx="2" fill="#fff" stroke="${COL.line}" stroke-width="1.3"/>${ck ? `<path d="M${cx - 4.5} ${cy}l3 3.2l6-6.6" fill="none" stroke="${COL.line}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}</g>`);
     }
   }
-  const sub = `チェック済み ${done} / ${total} 件。済の欄をクリックすると、mop:(未チェック)と mop*:(チェック済み)が切り替わる${warned.size ? '。点線の黄色い枠は MOP がない要素(検査 C3)' : ''}`;
+  const sub = `チェック済み ${done0} / ${total0} 件。済の欄をクリックすると、mop:(未チェック)と mop*:(チェック済み)が切り替わる${warned.size ? '。点線の黄色い枠は MOP がない要素(検査 C3)' : ''}`;
   const W = Math.max(endX + M, textW(sub, 11) + 2 * M);
   return wrapSvg(W, ry[ry.length - 1] + M, title + T_(M, 42, sub, { fs: 11, fill: COL.sub }) + out.join(''));
 }
 
 // ---- 役割分担(仕様書 7.4 節)
-function renderRoles(r) {
+// opt.rows: 作業の表の範囲 [始め, 終わり)。opt.table === false なら作業の表を描かない。opt.sum === false なら担当者ごとのまとめを描かない(印刷でページを分けるとき)
+function renderRoles(r, opt = {}) {
   const M = 20, TOP = 46;
   if (!r.tasks.length) return wrapSvg(400, 80, T_(M, 40, 'WBS に作業がありません', { fs: 13 }));
   const L = wbsTable(r);
@@ -1153,11 +1179,14 @@ function renderRoles(r) {
   const byW = pw((t) => who(r, t.by)), rvW = pw((t) => who(r, t.review));
   const extra = [['作成', byW], ['確認', rvW], ['日数', 50]];
   const hc = headerCells(L, M, TOP, L.RH, extra);
-  const body = drawWbsLeft(r, L, M, TOP + L.RH, (t) => [[byW, who(r, t.by) || '(なし)'], [rvW, who(r, t.review)], [50, fmtDays(t.days)]]);
+  const table = opt.table !== false;
+  const nRows = opt.rows ? opt.rows[1] - opt.rows[0] : r.tasks.length;
+  const body = table ? drawWbsLeft(r, L, M, TOP + L.RH, (t) => [[byW, who(r, t.by) || '(なし)'], [rvW, who(r, t.review)], [50, fmtDays(t.days)]], { rows: opt.rows }) : '';
   const tableW = hc.x - M;
   // 担当者ごとのまとめ
-  let y = TOP + L.RH * (r.tasks.length + 1) + 30;
+  let y = table ? TOP + L.RH * (nRows + 1) + 30 : TOP + 22;
   const sum = [];
+  if (opt.sum === false) return wrapSvg(Math.max(tableW, 450) + 2 * M, y - 30 + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + hc.svg + body);
   sum.push(T_(M, y - 8, '担当者ごとのまとめ', { fs: 13, weight: '600' }));
   const cols = [['担当者', 120], ['作成する作業', 100], ['作成の日数の合計', 130], ['確認する作業', 100]];
   let x = M;
@@ -1173,7 +1202,7 @@ function renderRoles(r) {
     y += L.RH;
   }
   const W = Math.max(tableW, 450) + 2 * M;
-  return wrapSvg(W, y + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + hc.svg + body + sum.join(''));
+  return wrapSvg(W, y + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + (table ? hc.svg + body : '') + sum.join(''));
 }
 
 // ---- ガントチャート(仕様書 7.5 節)
@@ -1256,6 +1285,7 @@ const barTitle = (r, t, late) => `${t.num} ${t.name}: ${fmtDate(r.sched.start + 
 // 図の日数(日程の終わりと end: の遅い方まで)
 const figDays = (r) => { const endD = r.sec.end && r.sec.end.date !== null ? r.sec.end.date - r.sched.start + 1 : 0; return { endD, nDays: Math.max(r.sched.spanDays, endD, 1) }; };
 
+// opts.rows: 描く作業の範囲 [始め, 終わり)(印刷で行を区切るとき)
 function renderGantt(r, opts = {}) {
   const M = 20, TOP = 58;
   if (!r.tasks.length) return wrapSvg(400, 80, T_(M, 40, 'WBS に作業がありません', { fs: 13 }));
@@ -1268,11 +1298,12 @@ function renderGantt(r, opts = {}) {
   const stW = 64;
   const left = headerCells(L, M, TOP, HR * 3, [['担当者', byW], ['状態', stW]]);
   const gx = left.x;
-  const bodyY = TOP + HR * 3, n = r.tasks.length;
+  const T = opts.rows ? r.tasks.slice(opts.rows[0], opts.rows[1]) : r.tasks;
+  const bodyY = TOP + HR * 3, n = T.length;
   const out = [left.svg, ...timeGrid(r, gx, TOP, HR, nDays, DW, bodyY, n * L.RH)];
   for (let i = 0; i <= n; i++) out.push(`<path d="M${gx} ${bodyY + i * L.RH}H${gx + nDays * DW}" stroke="${COL.grid}" stroke-width=".6"/>`);
   // 担当者の個人の休み(作業の行に薄い斜線)
-  r.tasks.forEach((t, i) => {
+  T.forEach((t, i) => {
     for (let d = 0; d < nDays; d++) {
       if (r.isOff(s0 + d)) continue;
       if (t.by.some((m) => r.memberOff(m, s0 + d))) out.push(`<rect x="${gx + d * DW + .5}" y="${bodyY + i * L.RH + .5}" width="${DW - 1}" height="${L.RH - 1}" fill="url(#hatch)"/>`);
@@ -1280,7 +1311,7 @@ function renderGantt(r, opts = {}) {
   });
   // 棒
   const handles = [];
-  r.tasks.forEach((t, i) => {
+  T.forEach((t, i) => {
     const y = bodyY + i * L.RH + 4, h = L.RH - 8;
     let s = barSvg(r, t, gx, DW, y, h, statusAttr(t.status));
     const late = isLate(r, t, today);
@@ -1290,7 +1321,7 @@ function renderGantt(r, opts = {}) {
   });
   out.push(...markLines(r, gx, TOP, HR, nDays, DW, bodyY + n * L.RH, endD, today));
   out.push(...handles);
-  const body = drawWbsLeft(r, L, M, bodyY, (t) => [[byW, who(r, t.by)], [stW, STATUS[t.status], t.status === 'blocked' ? COL.accent : undefined]], { crit: false });
+  const body = drawWbsLeft(r, L, M, bodyY, (t) => [[byW, who(r, t.by)], [stW, STATUS[t.status], t.status === 'blocked' ? COL.accent : undefined]], { crit: false, rows: opts.rows });
   const head = summaryText(r);
   const lg = legendSvg(today, M);
   const W = gx + nDays * DW + M + 30;
@@ -1312,6 +1343,7 @@ function peopleLoad(r) {
   const none = r.tasks.filter((t) => !t.by.length);
   return { rows, none: none.length ? { tasks: none, days: none.reduce((a, t) => a + t.days, 0) } : null, nDays };
 }
+// opts.rows: 描く行の範囲 [始め, 終わり)(印刷で行を区切るとき。横棒の長さの基準は全体のまま)
 function renderPeople(r, opts = {}) {
   const M = 20, TOP = 108, FS = 12, RH = 26, HR = 22, DW = 24;
   if (!r.tasks.length) return wrapSvg(400, 80, T_(M, 40, 'WBS に作業がありません', { fs: 13 }));
@@ -1340,10 +1372,11 @@ function renderPeople(r, opts = {}) {
     out.push(k ? `<g data-sort="${k}"><title>クリックで並べ替える(書いた順 → 少ない順 → 多い順)</title>${cell}</g>` : cell);
     x += w;
   }
-  const gx = x, bodyY = TOP + HR * 3, n = all.length;
+  const shown = opts.rows ? all.slice(opts.rows[0], opts.rows[1]) : all;
+  const gx = x, bodyY = TOP + HR * 3, n = shown.length;
   out.push(...timeGrid(r, gx, TOP, HR, nDays, DW, bodyY, n * RH));
   for (let i = 0; i <= n; i++) out.push(`<path d="M${gx} ${bodyY + i * RH}H${gx + nDays * DW}" stroke="${COL.grid}" stroke-width=".6"/>`);
-  all.forEach((row, i) => {
+  shown.forEach((row, i) => {
     const y = bodyY + i * RH;
     // 本人の休み(その人の行に斜線)
     if (row.member) for (let d = 0; d < nDays; d++) if (!r.isOff(s0 + d) && r.memberOff(row.member, s0 + d)) out.push(`<rect x="${gx + d * DW + .5}" y="${y + .5}" width="${DW - 1}" height="${RH - 1}" fill="url(#hatch)"/>`);
@@ -1554,6 +1587,85 @@ function workUntil(r, t, T) {
     w += Math.max(0, Math.min(T, (d + 1) * 1000) - Math.max(t.s, d * 1000));
   }
   return w;
+}
+
+// ---- 印刷のページ(仕様書 9 章)。1 ページに収めると元の大きさの半分より小さくなるビューは、ページを分ける
+// 基準は A4 横(96 dpi で 1123 × 794 px)から内側の空き 10 mm ずつを引いた大きさ。サマリーは縦向きで、分けない
+const PRINT_W = 1047, PRINT_H = 718, PRINT_MIN = 0.5;
+const svgSize = (svg) => { const m = /width="(\d+)" height="(\d+)"/.exec(svg); return [+m[1], +m[2]]; };
+// portrait: 縦向きのページ(幅と高さを入れ替える)
+const printScale = (svg, portrait) => { const [w, h] = svgSize(svg); return portrait ? Math.min(1, PRINT_H / w, PRINT_W / h) : Math.min(1, PRINT_W / w, PRINT_H / h); };
+// 行で区切る: draw([始め, 終わり)) が描くページを、縮み方が target 以上に収まる行数ずつに分ける
+function splitRanges(n, draw, target, portrait) {
+  const ranges = [];
+  let a = 0;
+  while (a < n) {
+    let lo = 1, hi = n - a;
+    while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (printScale(draw([a, a + mid]), portrait) >= target) lo = mid; else hi = mid - 1; }
+    ranges.push([a, a + lo]);
+    a += lo;
+  }
+  return ranges;
+}
+const splitRows = (n, draw, target, portrait) => splitRanges(n, draw, target, portrait).map(draw);
+// 表の行の目標の縮み方: 幅で決まる縮み方(高さでそれ以上は縮めない。幅のために半分より小さくなる表は、行で区切っても幅の分は縮む)
+const rowTarget = (svg, portrait) => Math.min(1, (portrait ? PRINT_H : PRINT_W) / svgSize(svg)[0]);
+// 縦向きで印刷するページ: サマリーと、分けたときのアローダイアグラムの作業の表(1 ページ目の矢印の図より後)
+const printPortrait = (view, i) => view === 'summary' || (view === 'aoa' && i > 0);
+function printPages(r, view, opts = {}) {
+  const full = render(r, view, opts);
+  if (!full.svg) return [];
+  if (view === 'summary' || printScale(full.svg) >= PRINT_MIN) return [full.svg];
+  if (view === 'fbs' || view === 'pbs' || view === 'wbs') {
+    // 木: 第 1 層の要素ごとに分ける。1 つでも半分より小さくなる要素は、その子ごとに分ける。小さいものは同じページにまとめる
+    const key = view.toUpperCase(), root = r.sec[key].root;
+    const sub = (n) => { const a = [n]; for (const c of n.children) a.push(...sub(c)); return a; };
+    const draw = (units) => { const keep = new Set(); for (const u of units) { sub(u).forEach((x) => keep.add(x)); for (let a = u.parent; a; a = a.parent) keep.add(a); } return renderTree(r, key, { keep }); };
+    let units = [...root.children];
+    for (let changed = true; changed;) {
+      changed = false;
+      const next = [];
+      for (const u of units) {
+        if (u.children.some((c) => c.children.length) && printScale(draw([u])) < PRINT_MIN) { next.push(...u.children); changed = true; } else next.push(u);
+      }
+      units = next;
+    }
+    const pages = [];
+    let cur = [], s0 = 1;
+    for (const u of units) {
+      if (cur.length && printScale(draw([...cur, u])) >= Math.min(s0, 0.75)) { cur.push(u); continue; }
+      if (cur.length) pages.push(draw(cur));
+      cur = [u]; s0 = printScale(draw(cur));
+    }
+    if (cur.length) pages.push(draw(cur));
+    return pages;
+  }
+  if (view === 'roles') {
+    const target = rowTarget(full.svg);
+    const draw = (rows) => renderRoles(r, { rows, sum: false });
+    const ranges = splitRanges(r.tasks.length, draw, target);
+    const pages = ranges.map(draw);
+    // 担当者ごとのまとめは、最後のページに入れば入れ、入らなければ次のページにする
+    const withSum = renderRoles(r, { rows: ranges[ranges.length - 1] });
+    if (printScale(withSum) >= target) pages[pages.length - 1] = withSum; else pages.push(renderRoles(r, { table: false }));
+    return pages;
+  }
+  if (view === 'mop') {
+    let n = 0;
+    for (const x of r.bySec.FBS) n += x.mops.length + (x.parent && !x.children.length && !x.mops.length ? 1 : 0);
+    return splitRows(n, (rows) => renderMop(r, { rows }), rowTarget(full.svg));
+  }
+  if (view === 'gantt') return splitRows(r.tasks.length, (rows) => renderGantt(r, { ...opts, rows }), rowTarget(full.svg));
+  if (view === 'people') {
+    const n = r.members.length + (r.tasks.some((t) => !t.by.length) ? 1 : 0);
+    return splitRows(n, (rows) => renderPeople(r, { ...opts, rows }), rowTarget(full.svg));
+  }
+  if (view === 'aoa') {
+    // アローダイアグラム: 矢印の図と作業の表を別のページにし、表は縦向きのページで、収まらなければ行で区切る
+    const tableFull = renderAOA(r, { part: 'table' });
+    return [renderAOA(r, { part: 'diagram' }), ...splitRows(r.tasks.length, (rows) => renderAOA(r, { part: 'table', rows }), rowTarget(tableFull, true), true)];
+  }
+  return [full.svg];
 }
 
 // 選んだ要素の情報(画面の下の欄)
@@ -1990,13 +2102,13 @@ const Edit = (() => {
   return { setAttr, setMopChecked, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
 })();
 
-return { parse, analyze, render, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
+return { parse, analyze, render, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
 })();
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
 const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop: 終了が開始より前なら登録できない\n  - 場所の設定 mop*: 場所を 100 文字まで登録できる\n- 通知\n  - 登録確認メール mop: 予定の登録から 1 分以内にメールが届く\n  - リマインドメール mop: 予定の 30 分前にメールが届く\n- 予定の共有\n  - アカウント登録 mop*: メールアドレスとパスワードで登録できる\n  - 共有ユーザの選択 mop: 登録済みのユーザを 5 人まで選べる\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行で作業を並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰の作業が多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生の作業・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。「印刷 / PDF」で、全部の図を 1 ページに 1 つずつ印刷できます(印刷の画面で「PDF に保存」を選ぶと PDF になります)。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行で作業を並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰の作業が多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生の作業・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。「印刷 / PDF」で、全部の図を 1 ページに 1 つずつ印刷できます(印刷の画面で「PDF に保存」を選ぶと PDF になります)。大きすぎる図は、ページを分けて印刷します。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -2682,14 +2794,17 @@ function buildPrint() {
   const ids = ['summary', ...Plan.VIEWS.map((v) => v.id).filter((id) => id !== 'summary')];
   let n = 0;
   for (const id of ids) {
-    let o;
-    try { o = Plan.render(last, id, { today: todayStr() }); } catch { continue; }
-    if (!o.svg) continue;
-    const page = el('div', 'page');
-    page.dataset.view = id;
-    page.innerHTML = o.svg;
-    area.append(page);
-    n++;
+    let pages;
+    try { pages = Plan.printPages(last, id, { today: todayStr() }); } catch { continue; }
+    // 1 ページに収めると半分より小さくなるビューは、分けたページを続けて入れる
+    pages.forEach((svg, i) => {
+      const page = el('div', 'page');
+      page.dataset.view = id;
+      if (Plan.printPortrait(id, i)) page.dataset.portrait = '1';
+      page.innerHTML = svg;
+      area.append(page);
+      n++;
+    });
   }
   return n;
 }

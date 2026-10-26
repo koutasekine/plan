@@ -844,6 +844,78 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(P.render(nt, 'summary', { today }).svg.includes('>(担当なし)<'), '担当なしの行');
   ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n'), 'summary', { today }).svg.includes('作業 0 件'), '作業がない計画');
 }
+// ---- 印刷のページ(仕様書 9 章): 半分より小さくなるビューだけ分ける
+{
+  const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
+  const r = P.analyze(t);
+  ok(P.VIEWS.every((v) => { const ps = P.printPages(r, v.id, { today: '2026-04-30' }); return ps.length === 1 && ps[0] === P.render(r, v.id, { today: '2026-04-30' }).svg; }), '例は、どのビューも 1 ページで、画面の図と同じ');
+  // 大きな計画: 7 つのフェーズ、各フェーズに 3 つのまとまり、各まとまりに 3 つの作業
+  let txt = 'start: 2026-05-20\nend: 2026-07-14\nmembers:\n' + Array.from({ length: 7 }, (_, i) => `- m${i}\n`).join('') + 'FBS: F\n';
+  for (let i = 0; i < 8; i++) { txt += `- f${i}\n`; for (let j = 0; j < 4; j++) txt += `  - f${i}_${j} mop: 項目${i}_${j} mop*: 済${i}_${j}\n`; }
+  txt += 'WBS: W\n';
+  let k = 0;
+  for (let i = 0; i < 7; i++) { txt += `- フェーズ${i}\n`; for (let j = 0; j < 3; j++) { txt += `  - まとまり${i}_${j}\n`; for (let q = 0; q < 3; q++) { txt += `    - 作業${i}_${j}_${q} days: 1 by: m${k % 7}${k ? ` after: 作業${Math.floor((k - 1) / 9)}_${Math.floor(((k - 1) % 9) / 3)}_${(k - 1) % 3}` : ''}\n`; k++; } } }
+  const b = P.analyze(txt);
+  ok(b.ok, `大きな計画にエラー: ${b.diags.filter((d) => d.level === 'error').map((d) => d.message)}`);
+  const sc = (svg) => { const m = /width="(\d+)" height="(\d+)"/.exec(svg); return Math.min(1, 1047 / m[1], 718 / m[2]); };
+  const ids = (svg) => [...svg.matchAll(/data-id="(n\d+)"/g)].map((m) => m[1]);
+  // WBS の木: 分けたページで、作業がちょうど 1 回ずつ出て、各ページは半分以上の大きさ
+  const wp = P.printPages(b, 'wbs');
+  const leafIds = b.tasks.map((x) => x.id);
+  const seen = wp.flatMap((p) => ids(p).filter((id) => leafIds.includes(id)));
+  ok(sc(P.render(b, 'wbs').svg) < 0.5 && wp.length > 1, `WBS の木を分けていない: ${wp.length}`);
+  ok(seen.length === leafIds.length && new Set(seen).size === leafIds.length, `WBS の作業が 1 回ずつ出ない: ${seen.length}/${leafIds.length}`);
+  ok(wp.every((p) => sc(p) >= 0.5), `WBS の分けたページが半分より小さい: ${wp.map(sc)}`);
+  ok(wp.every((p) => ids(p).includes(b.sec.WBS.root.id)), 'WBS の分けたページに根がない');
+  // 役割分担: 作業の行が 1 回ずつ。担当者ごとのまとめは 1 回
+  const rp = P.printPages(b, 'roles');
+  const rs = rp.flatMap((p) => ids(p).filter((id) => leafIds.includes(id)));
+  ok(sc(P.render(b, 'roles').svg) < 0.5 && rp.length > 1 && rs.length === leafIds.length && new Set(rs).size === leafIds.length, `役割分担の行: ${rp.length} ページ、${rs.length} 行`);
+  ok(rp.filter((p) => p.includes('担当者ごとのまとめ')).length === 1 && rp.every((p) => sc(p) >= 0.5), '役割分担のまとめと大きさ');
+  // アローダイアグラム: 矢印の図と作業の表を分け、表の行が 1 回ずつ
+  const ap = P.printPages(b, 'aoa');
+  ok(ap.length >= 2 && !ap[0].includes('>管理番号<') && ap.slice(1).every((p) => p.includes('>管理番号<') && !p.includes('<circle')), 'アローダイアグラムの図と表を分ける');
+  ok(P.printPortrait('aoa', 0) === false && P.printPortrait('aoa', 1) && P.printPortrait('summary', 0) && !P.printPortrait('roles', 1), '縦向きのページ(サマリーとアローダイアグラムの作業の表)');
+  ok(ap.slice(1).every((p) => { const m = /width="(\d+)" height="(\d+)"/.exec(p); return Math.min(1, 718 / m[1], 1047 / m[2]) === 1; }) && ap.slice(1, -1).every((p) => +/height="(\d+)"/.exec(p)[1] > 718), 'アローダイアグラムの作業の表は縦向きの大きさで区切る');
+  const at = ap.slice(1).flatMap((p) => [...p.matchAll(/<g data-id="(n\d+)"[^>]*><rect/g)].map((m) => m[1]));
+  ok(at.length === leafIds.length && new Set(at).size === leafIds.length, `アローダイアグラムの表の行: ${at.length}`);
+  // ガントチャート・担当者別: 行が 1 回ずつ。各ページは幅で決まる大きさ以上
+  for (const v of ['gantt', 'people']) {
+    const full = P.render(b, v, {}).svg, gp = P.printPages(b, v, {});
+    const wsc = Math.min(1, 1047 / /width="(\d+)"/.exec(full)[1]);
+    ok(gp.every((p) => sc(p) >= wsc - 1e-9), `${v} の分けたページが幅で決まる大きさより小さい`);
+    if (v === 'gantt') { const gs = gp.flatMap((p) => [...p.matchAll(/<g data-id="(n\d+)"[^>]*><title>[^<]*<\/title><rect x="\d+(?:\.\d+)?" y="\d+(?:\.\d+)?" width="\d+(?:\.\d+)?" height="22"/g)].map((m) => m[1])); ok(new Set(gs).size === leafIds.length && gs.length === leafIds.length, `ガントチャートの行が 1 回ずつ出ない: ${gs.length}`); }
+  }
+  // MOP の表: 行が 1 回ずつ、件数の表示は全体
+  const mp = P.printPages(b, 'mop');
+  const boxes = mp.flatMap((p) => [...p.matchAll(/data-mop="([^"]+)"/g)].map((m) => m[1]));
+  ok(boxes.length === 64 && new Set(boxes).size === 64 && mp.every((p) => p.includes('チェック済み 32 / 64 件')), `MOP の表の行: ${mp.length} ページ、${boxes.length} 行`);
+  // 1 つのフェーズだけでも半分より小さくなるときは、その子ごとに分ける
+  {
+    let w = 'start: 2026-05-20\nmembers:\n- A\nWBS: W\n- 大きいフェーズ\n';
+    for (let i = 0; i < 9; i++) { w += `  - 部分${i}\n`; for (let j = 0; j < 2; j++) { w += `    - 部分${i}_${j}\n`; for (let q = 0; q < 2; q++) w += `      - 作業${i}_${j}_${q} by: A days: 1\n`; } }
+    w += '- 小さいフェーズ\n  - 作業z by: A days: 1\n';
+    const c = P.analyze(w);
+    const pages = P.printPages(c, 'wbs');
+    const lv = c.tasks.map((x) => x.id);
+    const got = pages.flatMap((p) => ids(p).filter((id) => lv.includes(id)));
+    ok(pages.length > 2 && pages.every((p) => sc(p) >= 0.5) && got.length === lv.length && new Set(got).size === lv.length, `大きいフェーズを子ごとに分ける: ${pages.length} ページ、${pages.map(sc).map((x) => x.toFixed(2))}`);
+  }
+  // FBS の木も分ける(横に広い木)
+  {
+    let f = 'start: 2026-05-20\nmembers:\n- A\nFBS: F\n';
+    for (let i = 0; i < 10; i++) { f += `- 機能${i}\n`; for (let j = 0; j < 3; j++) { f += `  - 機能${i}_${j}\n`; for (let q = 0; q < 2; q++) f += `    - 機能${i}_${j}_${q}\n`; } }
+    const c = P.analyze(f + 'WBS: W\n- t by: A days: 1\n');
+    const pages = P.printPages(c, 'fbs');
+    const lv = c.bySec.FBS.filter((x) => !x.children.length).map((x) => x.id);
+    const got = pages.flatMap((p) => ids(p).filter((id) => lv.includes(id)));
+    ok(sc(P.render(c, 'fbs').svg) < 0.5 && pages.length > 1 && got.length === lv.length && new Set(got).size === lv.length && pages.every((p) => sc(p) >= 0.5), `FBS の木を分ける: ${pages.length} ページ`);
+  }
+  const fp = P.printPages(b, 'fbs');
+  const fl = b.bySec.FBS.filter((x) => !x.children.length).map((x) => x.id);
+  const fs2 = fp.flatMap((p) => ids(p).filter((id) => fl.includes(id)));
+  ok(sc(P.render(b, 'fbs').svg) >= 0.5 ? fp.length === 1 : fs2.length === fl.length && new Set(fs2).size === fl.length, 'FBS の木の分け方');
+}
 // ---- SVG の埋め込みと取り出し
 {
   const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');

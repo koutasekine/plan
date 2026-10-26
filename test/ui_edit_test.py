@@ -604,9 +604,25 @@ async def main():
         import re
         pdf = await pp.pdf(prefer_css_page_size=True)
         check(len(re.findall(rb'/Type\s*/Page[^s]', pdf)) == 10, '印刷すると 1 ビュー 1 ページ(10 ページ)')
+        boxes = [tuple(float(v) for v in m) for m in re.findall(rb'/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]', pdf)]
+        check(len(boxes) == 10 and boxes[0][0] < boxes[0][1] and all(w > h for w, h in boxes[1:]), f'サマリーだけ縦向き、ほかは横向き: {boxes[:3]}')
         await pp.emulate_media(media='screen')
         await pp.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
         check(await pp.evaluate("() => document.querySelector('#printArea').children.length") == 0, '印刷の後は印刷用の図を片付ける')
+        # 1 ページに収めると半分より小さくなるビューは、ページを分けて続けて入れる
+        big = 'start: 2026-05-20\nmembers:\n- A\n- B\nWBS: W\n' + ''.join(f'- フェーズ{i}\n' + ''.join(f'  - まとまり{i}_{j}\n' + ''.join(f'    - 作業{i}_{j}_{q} days: 1 by: {"AB"[q % 2]}\n' for q in range(3)) for j in range(3)) for i in range(7))
+        await pp.evaluate("(t) => { const s = document.querySelector('#src'); s.value = t; s.dispatchEvent(new Event('input')); }", big)
+        await pp.wait_for_timeout(500)
+        await pp.click('#btnPrint'); await pp.wait_for_timeout(300)
+        vs = (await pp.evaluate("() => [...document.querySelectorAll('#printArea .page')].map(p => p.dataset.view).join(' ')")).split()
+        check(vs.count('wbs') > 1 and vs.count('roles') > 1 and vs.count('aoa') > 1 and vs[0] == 'summary' and vs == sorted(vs, key=lambda v: ['summary','fbs','pbs','match','wbs','aoa','roles','gantt','people','mop'].index(v)), f'大きいビューは分けたページを続けて入れる: {vs}')
+        por = await pp.evaluate("() => [...document.querySelectorAll('#printArea .page')].map(p => p.dataset.portrait ? 'P' : 'L').join('')")
+        await pp.emulate_media(media='print')
+        pdf = await pp.pdf(prefer_css_page_size=True)
+        check(len(re.findall(rb'/Type\s*/Page[^s]', pdf)) == len(vs), '分けたページも 1 枚ずつ印刷される')
+        boxes = [tuple(float(v) for v in m) for m in re.findall(rb'/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]', pdf)]
+        check(''.join('P' if w < h else 'L' for w, h in boxes) == por and por[0] == 'P' and ''.join('P' if (v == 'aoa' and vs[:i].count('aoa') > 0) or v == 'summary' else 'L' for i, v in enumerate(vs)) == por, f'アローダイアグラムの作業の表は縦向き: {por}')
+        await pp.emulate_media(media='screen')
         # FBS のない計画では、FBS を使うビューを飛ばす
         await pp.evaluate("() => { const s = document.querySelector('#src'); s.value = 'start: 2026-04-23\\nmembers:\\n- A\\nWBS: W\\n- t by: A days: 1\\n'; s.dispatchEvent(new Event('input')); }")
         await pp.wait_for_timeout(400)
