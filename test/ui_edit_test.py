@@ -17,7 +17,7 @@ async def main():
         # 図がテキストと一致しているか(表示中の図 = いまのテキストから描いた図)
         async def same():
             return await pg.evaluate("""() => { const r = Plan.analyze(document.querySelector('#src').value); if (!r.ok) return 'error';
-              const d = new Date(), pd = (n) => String(n).padStart(2, '0'); const o = Plan.render(r, document.querySelector('#viewKind').value, { today: `${d.getFullYear()}-${pd(d.getMonth() + 1)}-${pd(d.getDate())}` }); const t = document.createElement('div'); t.innerHTML = o.svg ?? '';
+              const d = new Date(), pd = (n) => String(n).padStart(2, '0'); const cs = document.querySelector('#canvas').dataset.peopleSort; const sort = cs ? { key: cs.split(':')[0], dir: cs.split(':')[1] } : null; const o = Plan.render(r, document.querySelector('#viewKind').value, { today: `${d.getFullYear()}-${pd(d.getMonth() + 1)}-${pd(d.getDate())}`, sort }); const t = document.createElement('div'); t.innerHTML = o.svg ?? '';
               const c = document.querySelector('#canvas').cloneNode(true); c.querySelectorAll('.selected').forEach(e => { e.classList.remove('selected'); if (!e.getAttribute('class')) e.removeAttribute('class'); }); return t.innerHTML === c.innerHTML; }""")
         async def undo_all():
             await pg.focus('#src')
@@ -377,8 +377,32 @@ async def main():
             await pg.select_option('#viewKind', v); await pg.wait_for_timeout(200)
             await pg.locator('#canvas [data-id]').nth(3).click(); await pg.wait_for_timeout(150)
             check(await pg.evaluate("() => document.querySelector('#edit').classList.contains('on')"), f'本物のマウスのクリックで要素を選べる({v})')
+        # 担当者別ガントチャート: 見出しのクリックで並べ替え(書いた順 → 少ない順 → 多い順 → 書いた順)。棒と担当者を選べる
+        await load(orig)
+        await pg.select_option('#viewKind','people'); await pg.wait_for_timeout(200)
+        names = lambda: pg.evaluate("() => [...document.querySelectorAll('#canvas [data-id^=m] title')].map(t => t.textContent).join(',')")
+        check(await names() == '青木,井上,上田' and await same() is True, '担当者別ガントチャートは書いた順')
+        await pg.locator('#canvas [data-sort=days]').click(); await pg.wait_for_timeout(150)
+        check(await names() == '青木,井上,上田' and await pg.evaluate("() => document.querySelector('#canvas').dataset.peopleSort") == 'days:asc' and await same() is True, '作成の日数の少ない順')
+        await pg.locator('#canvas [data-sort=days]').click(); await pg.wait_for_timeout(150)
+        check(await names() == '上田,青木,井上' and await same() is True, '作成の日数の多い順')
+        await pg.locator('#canvas [data-sort=days]').click(); await pg.wait_for_timeout(150)
+        check(await names() == '青木,井上,上田' and await pg.evaluate("() => document.querySelector('#canvas').dataset.peopleSort ?? ''") == '', '3 回押すと書いた順に戻る')
+        await pg.locator('#canvas [data-sort=rate]').click(); await pg.locator('#canvas [data-sort=rate]').click(); await pg.wait_for_timeout(150)
+        check(await names() == '上田,青木,井上', '稼働率の多い順')
+        await pg.locator('#canvas [data-id^=m]').first.click(); await pg.wait_for_timeout(150)
+        check(await pg.locator('#edit label:has-text("名前") input').input_value() == '上田', '担当者の欄を押すと担当者を選ぶ')
+        tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks.find(x => x.name === '予定登録CRUD用APIの実装').id")
+        await pg.locator(f"#canvas g[data-id='{tid}'] rect").first.click(); await pg.wait_for_timeout(150)
+        check(await pg.locator('#edit label:has-text("名前") input').input_value() == '予定登録CRUD用APIの実装', '棒を押すと作業を選ぶ')
+        await pg.locator('#edit label:has-text("状態") select').select_option('done'); await pg.wait_for_timeout(200)
+        check(await names() == '上田,青木,井上' and await same() is True, '編集の後も並びを保ち、図がテキストと一致')
+        await undo_all()
+        await pg.reload(); await pg.wait_for_timeout(500)
+        await pg.select_option('#viewKind','people'); await pg.wait_for_timeout(200)
+        check(await names() == '青木,井上,上田', '開き直すと並びは書いた順(保存しない)')
         # ビューの並び: テスト項目(MOP)はいちばん下
-        check(await pg.evaluate("() => [...document.querySelectorAll('#viewKind option')].map(o => o.value).join(' ')") == 'fbs pbs match wbs aoa roles gantt mop', 'ビューの並び')
+        check(await pg.evaluate("() => [...document.querySelectorAll('#viewKind option')].map(o => o.value).join(' ')") == 'fbs pbs match wbs aoa roles gantt people mop', 'ビューの並び')
         await load(orig)
         # 9. ブラウザへの自動保持: 開き直すと続きから。新規の後は空。保持に失敗したら警告
         await pg.fill('#src', orig + '\n// 追記'); await pg.wait_for_timeout(400)

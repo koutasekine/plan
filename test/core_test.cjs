@@ -666,7 +666,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
 {
   const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
   const r = P.analyze(t);
-  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match wbs aoa roles gantt mop', 'ビューの並び');
+  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match wbs aoa roles gantt people mop', 'ビューの並び');
   const g = P.render(r, 'mop').svg;
   const boxes = [...g.matchAll(/data-mop="(n\d+)\|(\d+)" data-checked="([01])"/g)];
   const all = r.bySec.FBS.flatMap((n) => n.mops.map((m, i) => `${n.id}|${i}|${n.mopChecked[i] ? 1 : 0}`));
@@ -766,6 +766,34 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(/data-gx="[\d.]+"/.test(P.render(w, 'gantt').svg), 'つまみに目盛りの左端の位置がない');
   const pr = P.toPrompt([], 'x');
   ok(['off:(その人の休み)', '// から行末までは注', '「* 」「+ 」で始まるリスト', '__init__.py'].every((k) => pr.includes(k)), '修正依頼の文の書き方の要点');
+}
+// ---- 担当者別ガントチャート(仕様書 7.7 節)
+{
+  const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
+  const r = P.analyze(t);
+  const ld = P.peopleLoad(r);
+  // 例: 期間は 2026-04-23 〜 end: 2026-05-14 の 22 日、休みなし
+  ok(ld.nDays === 22 && ld.rows.map((x) => `${x.m.name}:${x.days}/${x.cap}`).join(' ') === '青木:8000/22 井上:8000/22 上田:16000/22', `例の作成の日数と作業できる日数: ${ld.rows.map((x) => `${x.m.name}:${x.days}/${x.cap}`).join(' ')}`);
+  ok(ld.rows.every((x) => x.days === r.tasks.filter((k) => k.by.includes(x.m)).reduce((a, k) => a + k.days, 0)), '作成の日数が作業の日数の合計と違う');
+  const g = P.render(r, 'people', {}).svg;
+  ok(g.includes('>36%<') && g.includes('>73%<') && g.includes('>16 日<'), '稼働率と日数の表示');
+  ok(r.tasks.every((k) => (g.match(new RegExp(`data-id="${k.id}"`, 'g')) ?? []).length === k.by.length), '作業の棒が担当者の数だけない');
+  ok(g === P.render(P.analyze(t), 'people', {}).svg, '担当者別ガントチャートが決定的でない');
+  // 並べ替え: 作成の日数・稼働率の少ない順・多い順。同じなら書いた順
+  const order = (sort) => [...P.render(r, 'people', { sort }).svg.matchAll(/data-id="m(\d+)"/g)].map((m) => +m[1]).join('');
+  ok(order(null) === '012' && order({ key: 'days', dir: 'asc' }) === '012' && order({ key: 'days', dir: 'desc' }) === '201' && order({ key: 'rate', dir: 'desc' }) === '201', `並べ替え: ${order({ key: 'days', dir: 'desc' })}`);
+  ok(P.render(r, 'people', { sort: { key: 'days', dir: 'desc' } }).svg.includes('作成の日数 ▼') && P.render(r, 'people', { sort: { key: 'rate', dir: 'asc' } }).svg.includes('稼働率 ▲'), '並べ替えの印');
+  ok(order({ key: 'bad', dir: 'asc' }) === '012', '知らない並べ替えは書いた順');
+  // 複数人の作業・担当なし・本人の休み・稼働率 100% 超え
+  const x = P.analyze('start: 2026-05-01\noff: sat, sun\nmembers:\n- A off: 2026-05-04..2026-05-06\n- B\n- C\nWBS: W\n- p by: A, B days: 2\n- q by: B days: 3\n- n days: 1\n- c by: C days: 1 review: A, B\n');
+  const lx = P.peopleLoad(x);
+  ok(lx.rows.map((k) => `${k.m.name}:${k.days}/${k.cap}/${k.review}`).join(' ') === 'A:2000/3/1 B:5000/6/1 C:1000/6/0', `複数人の作業・本人の休み: ${lx.rows.map((k) => `${k.m.name}:${k.days}/${k.cap}/${k.review}`).join(' ')}`);
+  ok(lx.none && lx.none.tasks.map((k) => k.name).join() === 'n' && lx.none.days === 1000, '担当なしの行');
+  const gx = P.render(x, 'people', {}).svg;
+  ok(gx.includes('>(担当なし)<') && gx.includes('>67%<') && gx.includes('>83%<') && gx.includes('>17%<') && gx.includes('fill="url(#hatch)"'), '担当なしの行・稼働率・本人の休みの斜線');
+  ok([...gx.matchAll(/data-id="m(\d+)"/g)].length === 3, '担当なしの行は担当者として選べない');
+  ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- p by: A days: 1\n'), 'people', { today: '2026-04-25' }).svg.includes('<circle'), '遅れの印');
+  ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- p by: A days: 1097\n'), 'people').svg === null, '期間の上限');
 }
 // ---- SVG の埋め込みと取り出し
 {
