@@ -666,7 +666,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
 {
   const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
   const r = P.analyze(t);
-  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match wbs aoa roles gantt people mop', 'ビューの並び');
+  ok(P.VIEWS.map((v) => v.id).join(' ') === 'fbs pbs match wbs aoa roles gantt people mop summary', 'ビューの並び');
   const g = P.render(r, 'mop').svg;
   const boxes = [...g.matchAll(/data-mop="(n\d+)\|(\d+)" data-checked="([01])"/g)];
   const all = r.bySec.FBS.flatMap((n) => n.mops.map((m, i) => `${n.id}|${i}|${n.mopChecked[i] ? 1 : 0}`));
@@ -794,6 +794,55 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok([...gx.matchAll(/data-id="m(\d+)"/g)].length === 3, '担当なしの行は担当者として選べない');
   ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- p by: A days: 1\n'), 'people', { today: '2026-04-25' }).svg.includes('<circle'), '遅れの印');
   ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- p by: A days: 1097\n'), 'people').svg === null, '期間の上限');
+}
+// 担当者別ガントチャート: 横棒の最長は担当者の中で決める。作業できる日が 0 日の担当者は「―」で、並べ替えではいちばん少ない側
+{
+  const x = P.analyze('start: 2026-05-01\nmembers:\n- A\n- B off: mon, tue, wed, thu, fri, sat, sun\nWBS: W\n- p by: A days: 2\n- n days: 6\n');
+  const g = P.render(x, 'people', {}).svg;
+  const widths = [...g.matchAll(/<rect x="[\d.]+" y="[\d.]+" width="([\d.]+)" height="12" fill="#666"\/>/g)].map((m) => +m[1]);
+  ok(widths.length === 3 && widths[0] === 86 && widths[1] === 0 && widths[2] === 86, `横棒の長さ(担当なしの行は最長で止める): ${widths}`);
+  const order = (sort) => [...P.render(x, 'people', { sort }).svg.matchAll(/data-id="m(\d+)"/g)].map((m) => +m[1]).join('');
+  ok(P.peopleLoad(x).rows[1].rate === null && g.includes('>―<') && order({ key: 'rate', dir: 'asc' }) === '10' && order({ key: 'rate', dir: 'desc' }) === '01', '作業できる日が 0 日の担当者');
+}
+// ---- サマリー(仕様書 7.8 節)
+{
+  const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
+  const r = P.analyze(t);
+  const today = '2026-04-30', dn = Math.round(Date.UTC(2026, 3, 30) / 86400000);
+  const g = P.render(r, 'summary', { today }).svg;
+  ok(['>実行前<', '>5 件<', '>11 日<', '>7 日<', '>3 日<', '>15 件<', '>32 日<'].every((k) => g.includes(k)), '状態ごとの件数と日数');
+  ok(g.includes('完了 34%(日数)、53%(件数)'), '完了の割合');
+  // 今日までに終わる予定: 休みのない例なので、各作業の [開始, 終わり] と [0, 今日の始まり] の重なりの合計
+  const T = (dn - r.sched.start) * 1000;
+  const plan = r.tasks.reduce((a, k) => a + Math.max(0, Math.min(k.f, T) - k.s), 0);
+  ok(P.plannedByToday(r, dn) === plan && g.includes(`今日までに終わる予定: ${P.fmtDays(plan)} 日分`), `今日までに終わる予定: ${P.plannedByToday(r, dn)} / ${plan}`);
+  const doneD = r.tasks.filter((k) => k.status === 'done').reduce((a, k) => a + k.days, 0);
+  ok(g.includes(`予定より ${P.fmtDays(plan - doneD)} 日分遅れています`), '遅れの日数');
+  const lates = r.tasks.filter((k) => k.status === 'blocked' || (k.status !== 'done' && dn > r.sched.start + k.d1));
+  ok(lates.every((k) => g.includes(`data-id="${k.id}"`)) && (g.match(/data-id="n\d+"/g) ?? []).length === lates.length, '遅れと問題発生の表');
+  ok(g.includes('チェック済み 3 / 7 件(43%)') && g.includes('警告はありません。'), 'MOP と警告');
+  ok(r.members.every((m, i) => g.includes(`data-id="m${i}"`)), '担当者ごとの表');
+  ok(g === P.render(P.analyze(t), 'summary', { today }).svg, 'サマリーが決定的でない');
+  ok(P.render(r, 'summary', {}).svg.includes('今日の日付がないため、比べられません。'), '今日の日付がないとき');
+  const bl = r.tasks.find((k) => k.status === 'blocked');
+  ok(P.render(r, 'summary', { today: '2026-04-24' }).svg.includes(`data-id="${bl.id}"`) && P.render(r, 'summary', {}).svg.includes(`data-id="${bl.id}"`), '遅れていない問題発生の作業も表に出す');
+  ok(P.render(r, 'summary', { today: '2026-04-01' }).svg.includes('今日までに終わる予定: 0 日分') && P.render(r, 'summary', { today: '2026-12-01' }).svg.includes(`今日までに終わる予定: 32 日分`), '今日が期間の前と後');
+  // 予定どおり・進んでいる
+  const ahead = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- a by: A days: 2 status: done\n- b by: A days: 2 after: a\n');
+  ok(P.render(ahead, 'summary', { today: '2026-04-24' }).svg.includes('予定より 1 日分進んでいます') && P.render(ahead, 'summary', { today: '2026-04-25' }).svg.includes('予定どおりです'), '予定より進んでいる・予定どおり');
+  // 休みのある計画: 今日までに終わる予定は休みの日を数えない
+  const w = P.analyze('start: 2026-05-01\noff: sat, sun\nmembers:\n- A off: 2026-05-05\nWBS: W\n- a by: A days: 4\n');
+  ok(P.plannedByToday(w, Math.round(Date.UTC(2026, 4, 6) / 86400000)) === 2000, `休みのある計画の今日までに終わる予定: ${P.plannedByToday(w, Math.round(Date.UTC(2026, 4, 6) / 86400000))}`);
+  // 警告のある計画: 項目ごとの件数
+  const x = P.analyze(fs.readFileSync(`${__dirname}/slide_excerpt.plan`, 'utf8'));
+  const gx = P.render(x, 'summary', { today }).svg;
+  const ws = x.diags.filter((d) => d.level === 'warn');
+  ok(ws.length > 0 && gx.includes(`>${ws.length} 件<`) && ['C1', 'C2', 'C4'].every((c) => gx.includes(`${c}: `)) && !gx.includes('C3: '), '警告の件数の表');
+  ok(!gx.includes('テスト項目(MOP)<') || gx.includes('MOP はまだ書かれていません。'), 'MOP のない FBS');
+  ok(!P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- a by: A days: 1\n'), 'summary', { today }).svg.includes('テスト項目(MOP)'), 'FBS がないときは MOP を出さない');
+  const nt = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- a days: 1\n');
+  ok(P.render(nt, 'summary', { today }).svg.includes('>(担当なし)<'), '担当なしの行');
+  ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n'), 'summary', { today }).svg.includes('作業 0 件'), '作業がない計画');
 }
 // ---- SVG の埋め込みと取り出し
 {

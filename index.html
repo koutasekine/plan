@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  プロジェクト計画 — FBS・PBS・WBS・役割分担・アローダイアグラム(クリティカルパス)・ガントチャート・担当者別ガントチャート・テスト項目(MOP)を 1 つのテキストから作る単一 HTML ツール
+  プロジェクト計画 — FBS・PBS・WBS・役割分担・アローダイアグラム(クリティカルパス)・ガントチャート・担当者別ガントチャート・テスト項目(MOP)・サマリーを 1 つのテキストから作る単一 HTML ツール
   https://plan.sapp.jp
 
   MIT License
@@ -1311,7 +1311,8 @@ function renderPeople(r, opts = {}) {
   if (ld.none) all.push({ name: '(担当なし)', member: null, tasks: ld.none.tasks, days: ld.none.days, rate: null, review: null });
   const nameW = Math.min(160, Math.max(70, ...all.map((x) => textW(x.name, FS) + 12)));
   const daysW = 150, rateW = 70, revW = 52;
-  const maxDays = Math.max(1, ...all.map((x) => x.days));
+  // 横棒の長さは、担当者のうち作成の日数がいちばん多い人を最長にする(担当なしの行は含めない。はみ出すときは最長で止める)
+  const maxDays = Math.max(1, ...rows.map((x) => x.days));
   const mark = (k) => (sort?.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
   const cols = [['担当者', nameW, null], [`作成の日数${mark('days')}`, daysW, 'days'], [`稼働率${mark('rate')}`, rateW, 'rate'], ['確認', revW, null]];
   const out = [];
@@ -1332,7 +1333,7 @@ function renderPeople(r, opts = {}) {
     let cx = M;
     const cell = (w, inner) => { const c = `<rect x="${cx}" y="${y}" width="${w}" height="${RH}" fill="#fff" stroke="${COL.grid}"/>${inner}`; cx += w; return c; };
     let left = cell(nameW, T_(cx + 5, y + 17, clip(row.name, nameW - 10, FS), { fs: FS, fill: row.member ? COL.text : COL.sub }));
-    const bw = Math.round((daysW - 64) * row.days / maxDays * 10) / 10;
+    const bw = Math.round((daysW - 64) * Math.min(1, row.days / maxDays) * 10) / 10;
     left += cell(daysW, `<rect x="${cx + 5}" y="${y + 7}" width="${bw}" height="${RH - 14}" fill="${COL.sub}"/>` + T_(cx + daysW - 6, y + 17, `${fmtDays(row.days)} 日`, { fs: FS, anchor: 'end' }));
     left += cell(rateW, T_(cx + rateW - 6, y + 17, row.rate === null ? '―' : `${Math.round(row.rate * 100)}%`, { fs: FS, anchor: 'end' }));
     left += cell(revW, T_(cx + revW - 6, y + 17, row.review === null ? '―' : `${row.review} 件`, { fs: FS, anchor: 'end' }));
@@ -1360,6 +1361,136 @@ function renderPeople(r, opts = {}) {
   return wrapSvg(Math.max(W, textW(title, 13) + 2 * M, lg.w + M), bodyY + n * RH + 30 + M, HATCH + T_(M, 24, title, { fs: 13, weight: '600' }) + lg.svg + out.join(''));
 }
 
+// ---- サマリー(仕様書 7.8 節)。計画の概要・作業の進み具合・予定との比べ・遅れと問題発生・担当者ごと・MOP・警告を 1 枚にまとめる
+// 今日までに終わる予定だった作業の長さ(1/1000 日)。日程どおりに進んだとき、今日の始まりまでに済んでいるはずの長さ
+function plannedByToday(r, today) {
+  if (today === null) return null;
+  const T = (today - r.sched.start) * 1000;
+  return r.tasks.reduce((a, t) => a + Math.min(t.days, workUntil(r, t, T)), 0);
+}
+const SUM_CAT = [['検査 C1', 'C1: FBS に対応する PBS'], ['検査 C2', 'C2: PBS に対応する FBS'], ['検査 C3', 'C3: FBS の MOP'], ['検査 C4', 'C4: PBS のための作業'], ['検査 C5', 'C5: 作業の担当者'], ['書き方', '書き方'], ['日程', '日程']];
+function renderSummary(r, opts = {}) {
+  const M = 20, FS = 12, RH = 22, W0 = 760;
+  const today = opts.today ? parseDate(opts.today) : null;
+  const s0 = r.sched.start, out = [];
+  let y = 24;
+  const h2 = (t) => { y += 40; out.push(T_(M, y, t, { fs: 14, weight: '600' })); out.push(`<path d="M${M} ${y + 6}H${M + W0}" stroke="${COL.grid}"/>`); y += 8; };
+  const line = (t, o = {}) => { y += 18; out.push(T_(M + (o.ind ?? 0), y, t, { fs: o.fs ?? FS, fill: o.fill })); };
+  const pct = (a, b) => (b > 0 ? `${Math.round(a / b * 100)}%` : '―');
+  // 表: cols は [見出し, 幅, 右寄せ]。rows は { cells, id(選べるとき), start, end }
+  const table = (cols, rows) => {
+    let x = M;
+    for (const [h, w] of cols) { out.push(`<rect x="${x}" y="${y}" width="${w}" height="${RH}" fill="${COL.head}" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, h, { fs: FS, weight: '600' })); x += w; }
+    y += RH;
+    for (const row of rows) {
+      x = M;
+      let g = '';
+      row.cells.forEach((c, i) => {
+        const [, w, right] = cols[i];
+        const v = typeof c === 'object' ? c : { t: c };
+        g += `<rect x="${x}" y="${y}" width="${w}" height="${RH}" fill="#fff" stroke="${COL.grid}"/>` + T_(right ? x + w - 6 : x + 5, y + 15, clip(String(v.t), w - 10, FS), { fs: FS, anchor: right ? 'end' : null, fill: v.fill, weight: v.weight });
+        x += w;
+      });
+      out.push(row.id ? `<g data-id="${row.id}" data-start="${row.start}" data-end="${row.end}">${row.title ? `<title>${esc(row.title)}</title>` : ''}${g}</g>` : g);
+      y += RH;
+    }
+  };
+  // 横棒(部分の並び。[長さ, 塗りの属性])
+  const bar = (parts, total, w = 420) => {
+    y += 8;
+    let x = M;
+    out.push(`<rect x="${M}" y="${y}" width="${w}" height="16" fill="#fff" stroke="${COL.line}"/>`);
+    for (const [v, fill] of parts) { if (!v || !total) continue; const bw = w * v / total; out.push(`<rect x="${x}" y="${y}" width="${bw}" height="16" ${fill}/>`); x += bw; }
+    out.push(`<rect x="${M}" y="${y}" width="${w}" height="16" fill="none" stroke="${COL.line}"/>`);
+    y += 16;
+  };
+
+  // 1. 計画の概要
+  out.push(T_(M, y, `サマリー(WBS: ${r.sec.WBS.root.name})`, { fs: 15, weight: '600' }));
+  h2('計画の概要');
+  line(`期間: ${fmtDate(s0)} 〜 ${r.sec.end && r.sec.end.date !== null ? fmtDate(r.sec.end.date) : '(end: なし)'}${today !== null ? `   今日: ${fmtDate(today)}` : ''}`);
+  line(summaryText(r)[0]);
+  line(`作業 ${r.tasks.length} 件、担当者 ${r.members.length} 人`);
+
+  // 2. 作業の進み具合
+  h2('作業の進み具合');
+  const keys = Object.keys(STATUS);
+  const cnt = Object.fromEntries(keys.map((k) => [k, r.tasks.filter((t) => t.status === k)]));
+  const days = Object.fromEntries(keys.map((k) => [k, cnt[k].reduce((a, t) => a + t.days, 0)]));
+  const totalDays = r.tasks.reduce((a, t) => a + t.days, 0);
+  bar(['done', 'doing', 'blocked', 'todo'].map((k) => [days[k], statusAttr(k)]), totalDays);
+  let lx = M + 436;
+  out.push(T_(lx, y - 3, `完了 ${pct(days.done, totalDays)}(日数)、${pct(cnt.done.length, r.tasks.length)}(件数)`, { fs: FS, weight: '600' }));
+  y += 6;
+  table([['状態', 120], ['件数', 80, true], ['日数', 100, true]], keys.map((k) => ({ cells: [STATUS[k], `${cnt[k].length} 件`, `${fmtDays(days[k])} 日`] })).concat([{ cells: [{ t: '計', weight: '600' }, { t: `${r.tasks.length} 件`, weight: '600' }, { t: `${fmtDays(totalDays)} 日`, weight: '600' }] }]));
+
+  // 3. 予定との比べ
+  h2('予定との比べ');
+  const plan = plannedByToday(r, today);
+  if (plan === null) line('今日の日付がないため、比べられません。', { fill: COL.sub });
+  else {
+    const doneD = days.done;
+    const diff = plan - doneD;
+    line(`今日までに終わる予定: ${fmtDays(plan)} 日分(全体の ${pct(plan, totalDays)})`);
+    line(`完了: ${fmtDays(doneD)} 日分(全体の ${pct(doneD, totalDays)})`);
+    line(diff > 0 ? `予定より ${fmtDays(diff)} 日分遅れています` : diff < 0 ? `予定より ${fmtDays(-diff)} 日分進んでいます` : '予定どおりです', { fill: diff > 0 ? COL.accent : COL.text, fs: 13 });
+    bar([[Math.min(doneD, totalDays), statusAttr('done')]], totalDays);
+    if (totalDays > 0) { const px = M + 420 * Math.min(plan, totalDays) / totalDays; out.push(`<path d="M${px} ${y - 22}V${y + 6}" stroke="${COL.line}" stroke-width="2"/>` + T_(px, y + 18, '今日までの予定', { fs: 11, anchor: 'middle' })); y += 14; }
+    out.push(T_(M + 436, y - 3 - 14, '灰色: 完了した日数', { fs: 11, fill: COL.sub }));
+  }
+
+  // 4. 遅れと問題発生
+  h2('遅れと問題発生');
+  const lates = r.tasks.filter((t) => isLate(r, t, today) || t.status === 'blocked');
+  if (!lates.length) line(today === null ? '問題発生の作業はありません(今日の日付がないため、遅れは調べていません)。' : '遅れと問題発生の作業はありません。', { fill: COL.sub });
+  else {
+    y += 8;
+    table([['管理番号', 80], ['作業', 260], ['担当', 120], ['予定の終わり', 100], ['状態', 80], ['遅れ', 50]], lates.map((t) => {
+      const late = isLate(r, t, today);
+      return { id: t.id, start: t.start, end: t.end, title: r.qname(t), cells: [t.num, t.name, who(r, t.by) || '(なし)', fmtDate(s0 + t.d1), { t: STATUS[t.status], fill: t.status === 'blocked' ? COL.accent : undefined }, { t: late ? '遅れ' : '', fill: COL.accent, weight: '600' }] };
+    }));
+  }
+
+  // 5. 担当者ごとの状況
+  h2('担当者ごとの状況');
+  y += 8;
+  const prow = (name, list, m, i) => {
+    const c = (k) => `${list.filter((t) => t.status === k).length}`;
+    const nl = list.filter((t) => isLate(r, t, today)).length;
+    return { id: m ? `m${i}` : null, start: m?.start, end: m?.end, cells: [m ? name : { t: name, fill: COL.sub }, c('todo'), c('doing'), c('done'), { t: c('blocked'), fill: c('blocked') !== '0' ? COL.accent : undefined }, { t: today === null ? '―' : `${nl}`, fill: nl ? COL.accent : undefined, weight: nl ? '600' : null }, `${fmtDays(list.reduce((a, t) => a + t.days, 0))} 日`] };
+  };
+  const prows = r.members.map((m, i) => prow(m.name, r.tasks.filter((t) => t.by.includes(m)), m, i));
+  const none = r.tasks.filter((t) => !t.by.length);
+  if (none.length) prows.push(prow('(担当なし)', none, null));
+  table([['担当者', 120], ['実行前', 64, true], ['実行中', 64, true], ['完了', 64, true], ['問題発生', 72, true], ['遅れ', 56, true], ['作成の日数', 90, true]], prows);
+
+  // 6. テスト項目(MOP)
+  if (r.sec.FBS) {
+    h2('テスト項目(MOP)');
+    const all = r.bySec.FBS.flatMap((n) => n.mopChecked);
+    const ok = all.filter(Boolean).length;
+    if (!all.length) line('MOP はまだ書かれていません。', { fill: COL.sub });
+    else {
+      bar([[ok, `fill="${COL.blue}"`]], all.length);
+      out.push(T_(M + 436, y - 3, `チェック済み ${ok} / ${all.length} 件(${pct(ok, all.length)})`, { fs: FS, weight: '600' }));
+    }
+  }
+
+  // 7. 検査の警告
+  h2('検査の警告');
+  const ws = r.diags.filter((d) => d.level === 'warn');
+  if (!ws.length) line('警告はありません。', { fill: COL.sub });
+  else {
+    y += 8;
+    const known = SUM_CAT.map(([c, label]) => [label, ws.filter((d) => d.cat === c).length]).filter(([, n]) => n);
+    const other = ws.filter((d) => !SUM_CAT.some(([c]) => c === d.cat)).length;
+    if (other) known.push(['その他', other]);
+    table([['項目', 220], ['件数', 80, true]], known.map(([l, n]) => ({ cells: [l, `${n} 件`] })).concat([{ cells: [{ t: '計', weight: '600' }, { t: `${ws.length} 件`, weight: '600' }] }]));
+    line('警告の中身は、左下の診断の欄で見られます。', { fill: COL.sub, fs: 11 });
+  }
+  return wrapSvg(W0 + 2 * M, y + M, out.join(''));
+}
+
 const VIEWS = [
   { id: 'fbs', label: 'FBS', need: ['FBS'] },
   { id: 'pbs', label: 'PBS', need: ['PBS'] },
@@ -1370,6 +1501,7 @@ const VIEWS = [
   { id: 'gantt', label: 'ガントチャート', need: ['WBS', 'start'] },
   { id: 'people', label: '担当者別ガントチャート', need: ['WBS', 'start', 'members'] },
   { id: 'mop', label: 'テスト項目(MOP)', need: ['FBS'] },
+  { id: 'summary', label: 'サマリー', need: ['WBS', 'start'] },
 ];
 const GANTT_MAX_DAYS = 1096;
 function render(r, view, opts = {}) {
@@ -1381,6 +1513,7 @@ function render(r, view, opts = {}) {
     case 'pbs': return { svg: renderTree(r, 'PBS') };
     case 'match': return { svg: renderMatch(r) };
     case 'mop': return { svg: renderMop(r) };
+    case 'summary': return { svg: renderSummary(r, opts) };
     case 'wbs': return { svg: renderTree(r, 'WBS') };
     case 'aoa': return { svg: renderAOA(r) };
     case 'roles': return { svg: renderRoles(r) };
@@ -1839,13 +1972,13 @@ const Edit = (() => {
   return { setAttr, setMopChecked, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
 })();
 
-return { parse, analyze, render, peopleLoad, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
+return { parse, analyze, render, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
 })();
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
 const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop: 終了が開始より前なら登録できない\n  - 場所の設定 mop*: 場所を 100 文字まで登録できる\n- 通知\n  - 登録確認メール mop: 予定の登録から 1 分以内にメールが届く\n  - リマインドメール mop: 予定の 30 分前にメールが届く\n- 予定の共有\n  - アカウント登録 mop*: メールアドレスとパスワードで登録できる\n  - 共有ユーザの選択 mop: 登録済みのユーザを 5 人まで選べる\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げの全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行で作業を並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰の作業が多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行で作業を並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰の作業が多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生の作業・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -1862,6 +1995,7 @@ let fileName = '';        // 開いている・保存したテキストのファ
 let fileHandle = null;    // 上書き保存の先(Chrome・Edge のファイル操作機能。開き直すと忘れる)
 let dirty = false;        // 保存していない変更があるか
 let editGen = 0;          // 編集の世代(保存の書き込み中に編集されたかを見分ける)
+let docGen = 0;           // 内容の世代(開く・新規・例で別の内容に替わったかを見分ける。普通の編集では変わらない)
 let opening = true;
 let debounce = null;
 
@@ -1871,6 +2005,7 @@ const todayStr = () => { const d = new Date(), p = (n) => String(n).padStart(2, 
 let drawnToday = todayStr();
 // 担当者別ガントチャートの並び(表示だけ。テキストにも自動保持にも残さない)。null は書いた順
 let peopleSort = null;
+function toggleSort(k) { peopleSort = peopleSort?.key !== k ? { key: k, dir: 'asc' } : peopleSort.dir === 'asc' ? { key: k, dir: 'desc' } : null; draw(); }
 
 // ---- 色付け(予約語・日付・数・注)
 const escH = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1994,11 +2129,7 @@ canvasEl.addEventListener('click', (e) => {
   pressed = null;
   // 担当者別ガントチャートの見出し: 並べ替え(書いた順 → 少ない順 → 多い順 → 書いた順)
   const so = target.closest('[data-sort]');
-  if (so && canvasEl.contains(so)) {
-    const k = so.getAttribute('data-sort');
-    peopleSort = peopleSort?.key !== k ? { key: k, dir: 'asc' } : peopleSort.dir === 'asc' ? { key: k, dir: 'desc' } : null;
-    draw(); return;
-  }
+  if (so && canvasEl.contains(so)) { toggleSort(so.getAttribute('data-sort')); return; }
   // テスト項目(MOP)の表の「済」の欄: mop: と mop*: を切り替える
   const mk = target.closest('[data-mop]');
   if (mk && canvasEl.contains(mk)) {
@@ -2084,10 +2215,11 @@ function buildForm(id) {
     if (opt.ph) inp.placeholder = opt.ph;
     inp.disabled = !can;
     let done = false; // 書き込んだ後、欄から離れるときの change で二重に書き込まないため(書き込めなかったときは立てない)
+    const builtFor = last; // この欄を作ったときの解析結果。テキストが替わった後の古い欄からは書き込まない
     // 戻り値: 'wrote'(書き込んだ)、'noop'(書き換えにならない)、'error'(拒否した。書きかけは残す)
     const commit = (focus) => {
       const clear = () => { if (pendingField?.inp === inp) pendingField = null; };
-      if (done || inp.value === value) { clear(); return 'noop'; }
+      if (done || inp.value === value || last !== builtFor) { clear(); return 'noop'; }
       const res = onSet(inp.value);
       if (res && !res.error && res.text === srcEl.value) { clear(); return 'noop'; }
       if (applyEdit(res, { focusLabel: label, ...focus })) { done = true; clear(); return 'wrote'; }
@@ -2159,9 +2291,11 @@ document.addEventListener('pointerdown', (e) => {
   const btn = e.target.closest('#edit button');
   const g = canvasEl.contains(e.target) ? e.target.closest('[data-id],[data-rel],[data-handle]') : null;
   const mk = canvasEl.contains(e.target) ? e.target.closest('[data-mop]') : null;
+  const so = canvasEl.contains(e.target) ? e.target.closest('[data-sort]') : null;
   let action = null;
   const fld = e.target.closest('#edit select, #edit input, #edit textarea');
-  if (btn) action = { kind: 'button', label: btn.textContent };
+  if (so) action = { kind: 'sort', key: so.getAttribute('data-sort') };
+  else if (btn) action = { kind: 'button', label: btn.textContent };
   else if (fld) action = { kind: 'focus', label: fld.parentElement.firstChild.textContent };
   else if (g?.hasAttribute('data-handle')) { const n = Plan.Edit.find(last, g.getAttribute('data-handle')); if (n) action = { kind: 'node', key: Plan.Edit.keyOf(n) }; }
   else if (g?.hasAttribute('data-rel')) { const [a, b] = g.getAttribute('data-rel').split('|'); action = { kind: 'rel', keys: [a, b].map((x) => Plan.Edit.keyOf(Plan.Edit.find(last, x))) }; }
@@ -2184,6 +2318,7 @@ function replay() {
   const a = pendingReplay;
   pendingReplay = null;
   if (!a || a.kind === 'none' || !last?.ok) return;
+  if (a.kind === 'sort') { toggleSort(a.key); return; }
   if (a.kind === 'focus') { const l = [...editEl.querySelectorAll('label')].find((x) => x.firstChild?.textContent === a.label); l?.querySelector('select,input,textarea')?.focus(); return; }
   if (a.kind === 'button') { const b = [...editEl.querySelectorAll('button')].find((x) => x.textContent === a.label && !x.disabled); b?.click(); return; }
   if (a.kind === 'rel') { const ids = a.keys.map((k) => Plan.Edit.locate(last, k)); if (ids.every(Boolean)) selectRel(ids.join('|')); return; }
@@ -2350,9 +2485,13 @@ srcEl.addEventListener('keydown', (e) => {
 });
 // テキストを入れ替える(新規・開く・例・開き直したときの続き)。o: { name, handle, dirty, save }
 function setText(text, base, o = {}) {
+  // 書きかけの欄は捨てる(古いテキストの要素の書き換えを、新しいテキストに当てないため)
+  pendingField = null; pendingReplay = null;
+  peopleSort = null; // 担当者別ガントチャートの並びは書いた順に戻す
   srcEl.value = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   if (base) fileBase = base;
   editGen++;
+  docGen++;
   fileName = o.name ?? '';
   fileHandle = o.handle ?? null;
   dirty = !!o.dirty;
@@ -2423,7 +2562,7 @@ function openFile(file, handle, handleP) {
     catch { alert(`${file.name}: UTF-8 として読めません`); return; }
     if (isSvg) { const x = Plan.extractSource(text); if (!x.ok) { alert(`${file.name}: ${x.error}`); return; } text = x.text; }
     // SVG は表示中のビュー 1 つ分の画像なので、テキストの保存先にしない(上書き保存では .plan の保存先を尋ねる)
-    setText(text, baseOf(file.name).replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt|people)$/, ''), isSvg ? {} : { name: file.name, handle });
+    setText(text, baseOf(file.name).replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt|people|summary)$/, ''), isSvg ? {} : { name: file.name, handle });
     // ドロップで開いたときは、上書きの先を後から受け取る(受け取る前に編集や別のファイルに替わっていれば使わない)
     const g = editGen;
     if (handleP && !isSvg) handleP.then((h) => { if (h?.kind === 'file' && editGen === g) fileHandle = h; }).catch(() => {});
@@ -2446,6 +2585,7 @@ window.addEventListener('drop', (e) => {
   // 上書きの先にするため、ファイルの扱いを受け取る(Chrome・Edge。ドロップの処理の中で呼ぶ必要がある)
   const it = e.dataTransfer.items?.[0];
   const hp = it && typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle() : null;
+  if (!/\.(plan|txt|svg)$/i.test(f.name)) { alert(`${f.name} は開けません。開けるのは .plan(.txt)と、プロジェクト計画で保存した .svg です。`); return; }
   if (!okToDiscard()) return;
   openFile(f, null, hp);
 });
@@ -2453,8 +2593,11 @@ function downloadText(name) { download(name, new Blob([srcEl.value], { type: 'te
 async function writeTo(h, text) { const w = await h.createWritable(); await w.write(text); await w.close(); }
 function setSaving(v) { saving = v; $('#btnSave').disabled = v; $('#btnSaveAs').disabled = v; }
 // 書き込みを始めたときの編集の世代と比べ、書き込み中に編集されていれば「未保存」のままにする
-function savedAt(gen, msg) {
-  if (editGen === gen) { setDirty(false); setStat(msg); } else setStat(`${msg}。保存中に変わった内容はまだ保存されていません`);
+// dg: 書き込みを始めたときの内容の世代。その間に別の内容を開いていたら、いまの内容の未保存の印は変えない
+function savedAt(gen, dg, msg) {
+  if (docGen !== dg) setStat(`${msg}(保存中に別の内容を開いたので、いま開いている内容は保存していません)`);
+  else if (editGen === gen) { setDirty(false); setStat(msg); }
+  else setStat(`${msg}。保存中に変わった内容はまだ保存されていません`);
 }
 async function saveAs() {
   if (saving) return;
@@ -2464,13 +2607,13 @@ async function saveAs() {
     try { h = await window.showSaveFilePicker({ suggestedName: fileName || `${fileBase}.plan`, ...PICK_SAVE }); }
     catch (e) { if (e?.name === 'AbortError') return; h = null; }
     if (h) {
-      const gen = editGen, text = srcEl.value;
+      const gen = editGen, dg = docGen, text = srcEl.value;
       setSaving(true);
       try {
         await writeTo(h, text);
-        // 書き込み中に「開く」「新規」などで別の内容に替わったときは、今の内容の保存先は変えない
-        if (editGen === gen) { fileHandle = h; fileName = h.name; fileBase = baseOf(h.name); }
-        savedAt(gen, `${h.name} に保存しました(${stamp()})`);
+        // 書き込み中に「開く」「新規」などで別の内容に替わったときは、今の内容の保存先は変えない(普通の編集なら変える)
+        if (docGen === dg) { fileHandle = h; fileName = h.name; fileBase = baseOf(h.name); showName(); persist(); }
+        savedAt(gen, dg, `${h.name} に保存しました(${stamp()})`);
         return;
       } catch { setStat('保存先に書き込めなかったので、ダウンロードで保存しました'); }
       finally { setSaving(false); }
@@ -2481,16 +2624,17 @@ async function saveAs() {
   name = name.trim() || `${fileBase}.plan`;
   if (!/\.(plan|txt)$/i.test(name)) name += '.plan';
   downloadText(name);
-  fileName = name; fileBase = baseOf(name);
+  // ダウンロードで保存した名前に替えるので、元のファイルへの上書きの先は忘れる(ファイルは消さない。次の上書き保存では保存先を尋ねる)
+  fileName = name; fileBase = baseOf(name); fileHandle = null;
   setDirty(false);
 }
 async function save() {
   if (saving) return;
   if (FS_OK && fileHandle) {
-    const gen = editGen, text = srcEl.value, h = fileHandle;
+    const gen = editGen, dg = docGen, text = srcEl.value, h = fileHandle;
     setSaving(true);
-    try { await writeTo(h, text); savedAt(gen, `${h.name} に上書き保存しました(${stamp()})`); }
-    catch (e) { if (e?.name !== 'AbortError') setStat('上書きできませんでした。「別名で保存」を使ってください'); }
+    try { await writeTo(h, text); savedAt(gen, dg, `${h.name} に上書き保存しました(${stamp()})`); }
+    catch (e) { setStat(e?.name === 'AbortError' ? '上書き保存を取りやめました' : '上書きできませんでした。「別名で保存」を使ってください'); }
     finally { setSaving(false); }
     return;
   }
@@ -2503,7 +2647,12 @@ $('#btnSave').addEventListener('click', save);
 $('#btnSaveAs').addEventListener('click', saveAs);
 // Ctrl+S(Mac では ⌘S)で上書き保存
 window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    // 書きかけの欄があれば、先に書き込む(上書き保存ボタンを押したときと同じ)。拒否されたら保存しない
+    if (pendingField && pendingField.commit({ keep: true }) === 'error') return;
+    save();
+  }
 });
 
 // ---- 上の帯のボタン
@@ -2528,7 +2677,8 @@ setInterval(() => {
   const a = document.activeElement;
   const label = editEl.contains(a) ? a.closest('label')?.firstChild?.textContent : null;
   const sel = label && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
-  if (viewKindEl.value === 'gantt') draw(); else { drawnToday = todayStr(); reselect(); }
+  // 今日の日付で変わるビュー(ガントチャート・担当者別ガントチャート・サマリー)は描き直す
+  if (['gantt', 'people', 'summary'].includes(viewKindEl.value)) draw(); else { drawnToday = todayStr(); reselect(); }
   if (label) {
     const l = [...editEl.querySelectorAll('label')].find((x) => x.firstChild?.textContent === label);
     const f = l?.querySelector('input,textarea,select');
