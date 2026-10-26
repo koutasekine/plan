@@ -163,7 +163,7 @@ footer a{color:#777}
 const Plan = (() => {
 'use strict';
 
-const SECTIONS = ['start', 'end', 'off', 'members', 'FBS', 'PBS', 'WBS'];
+const SECTIONS = ['version', 'start', 'end', 'off', 'members', 'FBS', 'PBS', 'WBS'];
 const ALLOWED = {
   members: ['off', 'note'],
   FBS: ['mop', 'mop*', 'note'],
@@ -223,6 +223,8 @@ function parse(text0) {
 
   const err = (ln, start, end, message, cat = '構文') => diags.push({ level: 'error', cat, line: ln, start, end, message });
   const warn = (ln, start, end, message, cat) => diags.push({ level: 'warn', cat, line: ln, start, end, message });
+  // 正しくない場所の version:(仕様書 3.3 節)。保存を止めるのに使うので印を付ける
+  const verErr = (ln, start, end, message) => diags.push({ level: 'error', cat: '構文', line: ln, start, end, message, ver: true });
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -238,13 +240,15 @@ function parse(text0) {
     if (!s.trim()) continue;
     const lead = /^[ \t\u3000]*/.exec(s)[0];
     const E = (a, b, msg) => err(ln, ls + a, ls + b, msg);
-    if (lead.includes('\u3000')) { const k = lead.indexOf('\u3000'); E(k, k + 1, '字下げに全角空白が使われています。半角の空白かタブにしてください'); continue; }
+    if (lead.includes('\u3000')) { const k = lead.indexOf('\u3000'); if (/^version:/.test(s.slice(lead.length))) { verErr(ln, ls + k, ls + lead.length + 8, 'version: は 1 行目にだけ、字下げせずに書けます。保存のときにアプリが書くので、この行は消してください(字下げに全角空白が使われています)'); continue; } E(k, k + 1, '字下げに全角空白が使われています。半角の空白かタブにしてください'); continue; }
     let ind = 0;
     for (const ch of lead) ind = ch === '\t' ? (Math.floor(ind / 4) + 1) * 4 : ind + 1;
     const c0 = lead.length;
     const c = s.slice(c0);
-    const secm = /^(start|end|off|members|FBS|PBS|WBS):/.exec(c);
+    const secm = /^(version|start|end|off|members|FBS|PBS|WBS):/.exec(c);
     if (secm) {
+      // version: は 1 行目にだけ書ける(仕様書 3.3 節)
+      if (secm[1] === 'version' && (ind > 0 || lead || ln !== 1)) { verErr(ln, ls + c0, ls + c0 + secm[0].length, 'version: は 1 行目にだけ、字下げせずに書けます。保存のときにアプリが書くので、この行は消してください'); continue; }
       if (ind > 0) { E(c0, c0 + secm[0].length, `節の行「${secm[0]}」は字下げせず、行頭から書いてください`); continue; }
       handleSection(secm[1], ln, ls, secm[0].length, s);
       continue;
@@ -262,11 +266,12 @@ function parse(text0) {
     if (sec[key]) { err(ln, ls, ls + klen, `「${key}:」が 2 回書かれています。各節は 1 回だけ書けます(${sec[key].line} 行で書いています)`); cur = { key: '_dup' }; return; }
     const rest = s.slice(klen);
     const restA = klen;
-    if (key === 'start' || key === 'end') {
+    // version: は最後にファイルとして保存した日(仕様書 4.1 節)。図と日程には使わない
+    if (key === 'version' || key === 'start' || key === 'end') {
       const v = trimRange(s, restA, s.length);
       const dn = parseDate(v.text);
       if (dn === null) err(ln, ls + v.a, ls + Math.max(v.b, v.a + 1), v.text ? `日付「${v.text}」が読めません。YYYY-MM-DD の形の実在する日付で書いてください` : `${key}: の後ろに日付を書いてください`);
-      sec[key] = { line: ln, start: ls, end: ls + s.length, date: dn };
+      sec[key] = { line: ln, start: ls, end: ls + s.length, date: dn, vStart: ls + v.a, vEnd: ls + v.b };
       cur = { key };
       return;
     }
@@ -1701,7 +1706,7 @@ function toPrompt(diags, text) {
   const out = [];
   out.push('次の「プロジェクト計画」(https://plan.sapp.jp)のテキスト記法について、下の診断の内容を直したテキストを書いてください。');
   out.push('返すテキストはコードブロック(```)で囲まず、テキストだけを書いてください。見出し(#)・番号付きのリスト・太字(**)・説明の文の行は書けません(構文エラーになります)。');
-  out.push('書き方の要点: 節は「start:」「end:」「off:」「members:」「FBS: 根の名前」「PBS: 根の名前」「WBS: 根の名前」。要素は「- 名前」の字下げで階層を作り、属性は名前の後ろに「予約語: 値」を並べる(FBS は mop: mop*:(チェック済みの MOP) note:、PBS は realizes: note:、WBS は for: days: by: review: after: status: note:)。複数の値はカンマ区切り。参照は名前で書き、同じ名前が複数あれば「親::子」と書く。メモは note: に書く。担当者の行には off:(その人の休み)と note: を書ける。// から行末までは注(行頭か空白の後の // だけ)。「* 」「+ 」で始まるリスト、** と __ は、太字のつもりでなくても書けない(__init__.py のような名前も不可)。status: は作業(末端の要素)の状態で、todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。');
+  out.push('書き方の要点: 1 行目の「version: 日付」は保存した日で、アプリが書くので、そのまま残す(ほかの場所には書かない)。節は「start:」「end:」「off:」「members:」「FBS: 根の名前」「PBS: 根の名前」「WBS: 根の名前」。要素は「- 名前」の字下げで階層を作り、属性は名前の後ろに「予約語: 値」を並べる(FBS は mop: mop*:(チェック済みの MOP) note:、PBS は realizes: note:、WBS は for: days: by: review: after: status: note:)。複数の値はカンマ区切り。参照は名前で書き、同じ名前が複数あれば「親::子」と書く。メモは note: に書く。担当者の行には off:(その人の休み)と note: を書ける。// から行末までは注(行頭か空白の後の // だけ)。「* 」「+ 」で始まるリスト、** と __ は、太字のつもりでなくても書けない(__init__.py のような名前も不可)。status: は作業(末端の要素)の状態で、todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。');
   out.push('');
   const er = diags.filter((d) => d.level === 'error'), wr = diags.filter((d) => d.level === 'warn');
   if (er.length) { out.push('## エラー'); for (const d of er) out.push(`- ${d.line} 行: ${d.message}`); out.push(''); }
@@ -2102,13 +2107,35 @@ const Edit = (() => {
   return { setAttr, setMopChecked, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
 })();
 
-return { parse, analyze, render, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
+// ---- version:(最後にファイルとして保存した日。1 行目にだけ書ける。仕様書 3.3 節・4.1 節・9 章)
+const normText = (t) => t.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+// 保存するときに、内容が変わったかを比べるためのテキスト。1 行目の version: の日付の部分(注または行末までの値。前後の空白を除く)だけを除く
+function stripVersion(text0) {
+  const text = normText(text0);
+  const v = parse(text).sec.version;
+  return v ? text.slice(0, v.vStart) + text.slice(v.vEnd) : text;
+}
+// 正しくない場所(1 行目の行頭以外)にある version: の行の番号。なければ null。注やメモの中の version: は数えない
+function misplacedVersion(text0) {
+  const d = parse(normText(text0)).diags.find((x) => x.ver);
+  return d ? d.line : null;
+}
+// 1 行目の version: の日付を date(YYYY-MM-DD)にしたテキスト。なければ 1 行目に足す
+function setVersion(text0, date) {
+  const text = normText(text0);
+  const v = parse(text).sec.version;
+  if (!v) return `version: ${date}\n${text}`;
+  const sp = v.vStart === v.vEnd && !/[ \t]/.test(text[v.vStart - 1]) ? ' ' : '';
+  return text.slice(0, v.vStart) + sp + date + text.slice(v.vEnd);
+}
+
+return { parse, analyze, stripVersion, setVersion, misplacedVersion, render, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
 })();
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
 const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop: 終了が開始より前なら登録できない\n  - 場所の設定 mop*: 場所を 100 文字まで登録できる\n- 通知\n  - 登録確認メール mop: 予定の登録から 1 分以内にメールが届く\n  - リマインドメール mop: 予定の 30 分前にメールが届く\n- 予定の共有\n  - アカウント登録 mop*: メールアドレスとパスワードで登録できる\n  - 共有ユーザの選択 mop: 登録済みのユーザを 5 人まで選べる\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行で作業を並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰の作業が多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生の作業・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。「印刷 / PDF」で、全部の図を 1 ページに 1 つずつ印刷できます(印刷の画面で「PDF に保存」を選ぶと PDF になります)。大きすぎる図は、ページを分けて印刷します。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>version:</td><td></td><td>最後にファイルとして保存した日(YYYY-MM-DD)。1 行目にだけ書ける。上書き保存・別名で保存のときにアプリが書く(なければ 1 行目に足す)。内容が変わっていなければ変えない。図と日程には使わない</td></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素が作業(活動タスク)</td></tr>\n</table>\n<p>節の順は自由です(<code>version:</code> は 1 行目にだけ)。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のための作業か</td></tr>\n<tr><td>days:</td><td>WBS</td><td>作業の日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下の作業すべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>作業の状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端の作業にだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のための作業がある(PBS があるとき)</li>\n<li>C5: 作業すべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早い作業から順に置きます(同じなら書いた順)。休みの日は作業が止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色は作業の状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していない作業に「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行で作業を並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰の作業が多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生の作業・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先の作業の矢印から後の作業の矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、作業を選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。「印刷 / PDF」で、全部の図を 1 ページに 1 つずつ印刷できます(印刷の画面で「PDF に保存」を選ぶと PDF になります)。大きすぎる図は、ページを分けて印刷します。保存すると、1 行目の <code>version:</code> がその日の日付になります(なければ足します)。<code>version:</code> の日付のほかに変更がなければ日付は変えず、上書き保存は書き込みません(別名で保存は、日付を変えずに書き込みます)。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -2123,6 +2150,7 @@ let selectedId = null;
 let fileBase = 'plan';    // 画像を保存するときの名前のもと(拡張子なし)
 let fileName = '';        // 開いている・保存したテキストのファイル名(なければ空)
 let fileHandle = null;    // 上書き保存の先(Chrome・Edge のファイル操作機能。開き直すと忘れる)
+let savedText = null;     // 比べる相手: 最後に開いた・保存したファイルの中身(なければ null)。version: を上げるかを決めるのに使う。自動保持にも残す
 let dirty = false;        // 保存していない変更があるか
 let editGen = 0;          // 編集の世代(保存の書き込み中に編集されたかを見分ける)
 let docGen = 0;           // 内容の世代(開く・新規・例で別の内容に替わったかを見分ける。普通の編集では変わらない)
@@ -2145,7 +2173,7 @@ function hlLine(line) {
   for (let k = 0; k < line.length - 1; k++) if (line[k] === '/' && line[k + 1] === '/' && (k === 0 || line[k - 1] === ' ' || line[k - 1] === '\t')) { cut = k; break; }
   const body = line.slice(0, cut), cm = line.slice(cut);
   let h = escH(body)
-    .replace(/^(start|end|off|members|FBS|PBS|WBS):/, '<span class="kw">$1:</span>')
+    .replace(/^(version|start|end|off|members|FBS|PBS|WBS):/, '<span class="kw">$1:</span>')
     .replace(/(^|[ \t])(realizes|for|days|by|review|after|status|note|mop\*?|off):/g, '$1<span class="kw">$2:</span>')
     .replace(/\b(\d{4}-\d{2}-\d{2})\b/g, '<span class="nu">$1</span>')
     .replace(/\b(mon|tue|wed|thu|fri|sat|sun)\b/g, '<span class="nu">$1</span>');
@@ -2457,15 +2485,10 @@ function replay() {
 }
 document.addEventListener('click', (e) => { if (pendingReplay) { e.stopPropagation(); e.preventDefault(); replay(); } }, true);
 document.addEventListener('pointerup', () => { if (pendingReplay) setTimeout(() => { if (pendingReplay) replay(); }, 0); }, true);
-let applying = false; // 書き込みの途中で、別の書き込みが入れ子に始まらないようにする
-// focus: パネルの欄から書き込んだとき、書き込んだ後に入力をどこへ戻すか({ focusLabel, move: -1|0|1, keep })。
-// 戻り値は、テキストを書き換えたかどうか
-function applyEdit(res, focus = null) {
-  if (!res || applying) return false;
-  if (res.error) { showEditError(res.error); return false; }
-  if (!editable()) { showEditError('いまは図から編集できません(テキストにエラーがあるか、描き直しの途中です)。'); return false; }
-  const old = srcEl.value, nt = res.text;
-  if (old === nt) return false;
+// テキスト欄を nt に替える。変わった部分だけを、元に戻す(Ctrl+Z)の履歴に載る書き方で入れる。
+// 戻り値: 替えた範囲(元のテキストの [p, e) を長さ len の文字列にした)
+function spliceSrc(nt) {
+  const old = srcEl.value;
   let p = 0;
   while (p < old.length && p < nt.length && old[p] === nt[p]) p++;
   let q = 0;
@@ -2484,6 +2507,18 @@ function applyEdit(res, focus = null) {
   if (!done || srcEl.value !== nt) { srcEl.value = nt; } // execCommand が使えないブラウザでは直接書く(このときは Ctrl+Z で戻せない)
   srcEl.scrollTop = keepTop;
   } finally { applying = false; }
+  return { p, e: old.length - q, len: mid.length };
+}
+let applying = false; // 書き込みの途中で、別の書き込みが入れ子に始まらないようにする
+// focus: パネルの欄から書き込んだとき、書き込んだ後に入力をどこへ戻すか({ focusLabel, move: -1|0|1, keep })。
+// 戻り値は、テキストを書き換えたかどうか
+function applyEdit(res, focus = null) {
+  if (!res || applying) return false;
+  if (res.error) { showEditError(res.error); return false; }
+  if (!editable()) { showEditError('いまは図から編集できません(テキストにエラーがあるか、描き直しの途中です)。'); return false; }
+  const nt = res.text;
+  if (srcEl.value === nt) return false;
+  spliceSrc(nt);
   if (res.select !== undefined) { selectedKey = res.select; selectedRel = null; if (res.select === null) selectedId = null; }
   updateHighlight();
   edited();
@@ -2589,7 +2624,7 @@ const WARN = { save: '', tab: '' };
 const setWarn = (kind, t) => { WARN[kind] = t; warnEl.textContent = [WARN.save, WARN.tab].filter(Boolean).join(' / '); };
 function persist() {
   let ok = true;
-  try { localStorage.setItem(KEY_DOC, JSON.stringify({ text: srcEl.value, base: fileBase, name: fileName, dirty })); } catch { ok = false; }
+  try { localStorage.setItem(KEY_DOC, JSON.stringify({ text: srcEl.value, base: fileBase, name: fileName, dirty, saved: savedText })); } catch { ok = false; }
   setWarn('save', ok ? '' : 'ブラウザへの自動保持に失敗しました。「上書き保存」か「別名で保存」でファイルに残してください');
 }
 function restored() {
@@ -2613,7 +2648,7 @@ srcEl.addEventListener('keydown', (e) => {
     if (!document.execCommand('insertText', false, '  ')) { srcEl.setRangeText('  ', srcEl.selectionStart, srcEl.selectionEnd, 'end'); srcEl.dispatchEvent(new Event('input')); }
   }
 });
-// テキストを入れ替える(新規・開く・例・開き直したときの続き)。o: { name, handle, dirty, save }
+// テキストを入れ替える(新規・開く・例・開き直したときの続き)。o: { name, handle, dirty, save, saved }(saved: 比べる相手)
 function setText(text, base, o = {}) {
   // 書きかけの欄は捨てる(古いテキストの要素の書き換えを、新しいテキストに当てないため)
   pendingField = null; pendingReplay = null;
@@ -2624,6 +2659,7 @@ function setText(text, base, o = {}) {
   docGen++;
   fileName = o.name ?? '';
   fileHandle = o.handle ?? null;
+  savedText = typeof o.saved === 'string' ? o.saved.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n') : null;
   dirty = !!o.dirty;
   showName();
   selectedId = null;
@@ -2692,7 +2728,7 @@ function openFile(file, handle, handleP) {
     catch { alert(`${file.name}: UTF-8 として読めません`); return; }
     if (isSvg) { const x = Plan.extractSource(text); if (!x.ok) { alert(`${file.name}: ${x.error}`); return; } text = x.text; }
     // SVG は表示中のビュー 1 つ分の画像なので、テキストの保存先にしない(上書き保存では .plan の保存先を尋ねる)
-    setText(text, baseOf(file.name).replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt|people|summary)$/, ''), isSvg ? {} : { name: file.name, handle });
+    setText(text, baseOf(file.name).replace(/_(fbs|pbs|match|mop|wbs|aoa|roles|gantt|people|summary)$/, ''), isSvg ? { saved: text } : { name: file.name, handle, saved: text });
     // ドロップで開いたときは、上書きの先を後から受け取る(受け取る前に編集や別のファイルに替わっていれば使わない)
     const g = editGen;
     if (handleP && !isSvg) handleP.then((h) => { if (h?.kind === 'file' && editGen === g) fileHandle = h; }).catch(() => {});
@@ -2719,59 +2755,145 @@ window.addEventListener('drop', (e) => {
   if (!okToDiscard()) return;
   openFile(f, null, hp);
 });
-function downloadText(name) { download(name, new Blob([srcEl.value], { type: 'text/plain;charset=utf-8' })); }
+function downloadText(name, text) { download(name, new Blob([text], { type: 'text/plain;charset=utf-8' })); }
 async function writeTo(h, text) { const w = await h.createWritable(); await w.write(text); await w.close(); }
 function setSaving(v) { saving = v; $('#btnSave').disabled = v; $('#btnSaveAs').disabled = v; }
-// 書き込みを始めたときの編集の世代と比べ、書き込み中に編集されていれば「未保存」のままにする
-// dg: 書き込みを始めたときの内容の世代。その間に別の内容を開いていたら、いまの内容の未保存の印は変えない
-function savedAt(gen, dg, msg) {
-  if (docGen !== dg) setStat(`${msg}(保存中に別の内容を開いたので、いま開いている内容は保存していません)`);
-  else if (editGen === gen) { setDirty(false); setStat(msg); }
-  else setStat(`${msg}。保存中に変わった内容はまだ保存されていません`);
+
+// ---- version:(仕様書 3.3 節・4.1 節・9 章)
+// 正しくない場所に version: があれば保存せず、その行を選んで知らせる
+function blockedByVersion() {
+  const ln = Plan.misplacedVersion(srcEl.value);
+  if (ln === null) return false;
+  setStat(`version: が正しくない場所にあります(${ln} 行目)。version: は 1 行目にだけ書けます。直してから保存してください`);
+  const lines = srcEl.value.split('\n');
+  const a = lines.slice(0, ln - 1).reduce((x, l) => x + l.length + 1, 0);
+  srcEl.focus(); srcEl.setSelectionRange(a, a + lines[ln - 1].length); scrollToOffset(a);
+  return true;
 }
+// 上書き保存で、比べる相手と(version: の日付の部分を除いて)同じなら、書き込まない
+function unchanged() {
+  if (savedText === null) return false;
+  const cur = srcEl.value;
+  if (cur === savedText) { setStat('変更がないので、保存しませんでした'); if (dirty) setDirty(false); return true; }
+  if (Plan.stripVersion(cur) === Plan.stripVersion(savedText)) { setStat('version: の日付のほかに変更がないので、保存しませんでした'); return true; }
+  return false;
+}
+// 書き込むテキスト: 比べる相手と(version: の日付の部分を除いて)違えば(比べる相手がなければ)、version: を今日の日付にする(なければ 1 行目に足す)。
+// テキスト欄はまだ変えない(書き込みに成功してから入れる)
+function stamped(cur) {
+  if (savedText !== null && Plan.stripVersion(cur) === Plan.stripVersion(savedText)) return { text: cur, date: null };
+  const date = todayStr();
+  return { text: Plan.setVersion(cur, date), date };
+}
+// 書き込みに成功した後、テキスト欄の version: を書き込んだ日付にする。元に戻す(Ctrl+Z)の履歴に載せ、カーソルと入力の場所は元に戻す
+function putVersion(nt) {
+  const cur = srcEl.value;
+  if (nt === cur) return;
+  const act = document.activeElement, s0 = srcEl.selectionStart, s1 = srcEl.selectionEnd, top = srcEl.scrollTop;
+  // 編集パネルの欄・ボタンにいたときは、描き直しでパネルが作り直されるので、見出し・文字で探し直して戻す(日付が変わったときの描き直しと同じ)
+  const inPanel = act && editEl.contains(act);
+  const label = inPanel ? act.closest('label')?.firstChild?.textContent ?? null : null;
+  const btnText = inPanel && act.tagName === 'BUTTON' ? act.textContent : null;
+  const fsel = label && act.selectionStart != null ? [act.selectionStart, act.selectionEnd] : null;
+  // 書きかけの欄があれば、その値も作り直した欄に入れ直す(書きかけを消さない)
+  const pend = pendingField ? { label: pendingField.inp.closest('label')?.firstChild?.textContent, value: pendingField.inp.value } : null;
+  const lines0 = cur.split('\n').length;
+  const c = spliceSrc(nt);
+  // カーソルの位置: 同じ長さの置き換え(日付を替えた)なら、そのまま。足したときは、足した分だけ後ろへ
+  const map = (x) => (c.e - c.p === c.len || x < c.p ? x : x >= c.e ? x + c.len - (c.e - c.p) : c.p + c.len);
+  srcEl.setSelectionRange(map(s0), map(s1));
+  // 1 行目に足したときは、見えていた場所が動かないよう 1 行分ずらす
+  srcEl.scrollTop = top + (top > 0 ? (nt.split('\n').length - lines0) * LINE_PX : 0);
+  updateHighlight();
+  clearTimeout(debounce); debounce = null;
+  analyze();
+  const fieldOf = (lb) => [...editEl.querySelectorAll('label')].find((x) => x.firstChild?.textContent === lb)?.querySelector('input,textarea,select') ?? null;
+  if (pend) {
+    pendingField = null;
+    const f = fieldOf(pend.label);
+    if (f && !f.disabled) { f.value = pend.value; f.dispatchEvent(new Event('input')); }
+  }
+  // 入力の場所を戻す(テキスト欄・パネルの欄・パネルのボタン・そのほかの要素。どこにもなければ、どこにも置かない)
+  if (act === srcEl) return;
+  if (label) { const f = fieldOf(label); if (f) { f.focus(); if (fsel && f.setSelectionRange) f.setSelectionRange(...fsel); return; } }
+  if (btnText !== null) { const b = [...editEl.querySelectorAll('button')].find((x) => x.textContent === btnText && !x.disabled); if (b) { b.focus(); return; } }
+  if (act && act !== document.body && act.isConnected && typeof act.focus === 'function') act.focus(); else srcEl.blur();
+}
+// モーダルの画面(書き方など)が開いている間は、テキスト欄に書き込めない(元に戻す履歴に載らない)ので、閉じてから行う
+function whenFree(fn) {
+  const d = document.querySelector('dialog[open]');
+  if (d) d.addEventListener('close', () => whenFree(fn), { once: true }); else fn();
+}
+// 書き込みに成功した後の始末。gen・dg: 書き込みを始めたときの編集・内容の世代。st: 書き込んだもの(stamped の戻り値)
+// 書き込み中に編集されていれば「未保存」のまま(日付だけはテキスト欄にも入れる)。別の内容を開いていたら、いまの内容には何もしない
+function afterWrite(gen, dg, st, msg) {
+  if (docGen !== dg) { setStat(`${msg}(保存中に別の内容を開いたので、いま開いている内容は保存していません)`); return; }
+  savedText = st.text;
+  if (editGen === gen) { setDirty(false); setStat(msg); whenFree(() => { if (docGen === dg) { putVersion(st.text); setDirty(false); } }); return; }
+  // テキスト欄の 1 行目に version: があるときだけ替える(書き込み中に人が消した行は足し戻さない)
+  if (st.date) whenFree(() => { if (docGen === dg && Plan.parse(srcEl.value).sec.version) { putVersion(Plan.setVersion(srcEl.value, st.date)); persist(); } });
+  persist();
+  setStat(`${msg}。保存中に変わった内容はまだ保存されていません`);
+}
+let picking = false; // 保存先を選んでいる間(同じ操作を二重に始めないため)
 async function saveAs() {
-  if (saving) return;
+  if (saving || picking) return;
+  picking = true;
+  try { await saveAs1(); } finally { picking = false; }
+}
+async function saveAs1() {
   if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
+  if (blockedByVersion()) return;
+  let why = ''; // ダウンロードに切り替えた理由(保存できてから出す)
   if (FS_OK) {
     let h;
     try { h = await window.showSaveFilePicker({ suggestedName: fileName || `${fileBase}.plan`, ...PICK_SAVE }); }
     catch (e) { if (e?.name === 'AbortError') return; h = null; }
     if (h) {
-      const gen = editGen, dg = docGen, text = srcEl.value;
+      if (blockedByVersion()) return; // 保存先を選んでいる間に書き換えられたとき
+      const gen = editGen, dg = docGen, st = stamped(srcEl.value);
       setSaving(true);
       try {
-        await writeTo(h, text);
+        await writeTo(h, st.text);
         // 書き込み中に「開く」「新規」などで別の内容に替わったときは、今の内容の保存先は変えない(普通の編集なら変える)
         if (docGen === dg) { fileHandle = h; fileName = h.name; fileBase = baseOf(h.name); showName(); persist(); }
-        savedAt(gen, dg, `${h.name} に保存しました(${stamp()})`);
+        afterWrite(gen, dg, st, `${h.name} に保存しました(${stamp()})`);
         return;
-      } catch { setStat('保存先に書き込めなかったので、ダウンロードで保存しました'); }
+      } catch { why = '保存先に書き込めなかったので、ダウンロードで保存しました'; }
       finally { setSaving(false); }
-    } else setStat('保存先を選べなかったので、ダウンロードで保存しました');
+    } else why = '保存先を選べなかったので、ダウンロードで保存しました';
   }
   let name = prompt('ファイル名', fileName || `${fileBase}.plan`);
-  if (name === null) return;
+  if (name === null) { if (why) setStat('保存を取りやめました'); return; }
   name = name.trim() || `${fileBase}.plan`;
   if (!/\.(plan|txt)$/i.test(name)) name += '.plan';
-  downloadText(name);
+  if (blockedByVersion()) return;
+  const st = stamped(srcEl.value);
+  downloadText(name, st.text);
   // ダウンロードで保存した名前に替えるので、元のファイルへの上書きの先は忘れる(ファイルは消さない。次の上書き保存では保存先を尋ねる)
   fileName = name; fileBase = baseOf(name); fileHandle = null;
-  setDirty(false);
+  afterWrite(editGen, docGen, st, '');
+  setStat(why);
 }
 async function save() {
-  if (saving) return;
+  if (saving || picking) return;
+  if (blockedByVersion()) return;
   if (FS_OK && fileHandle) {
-    const gen = editGen, dg = docGen, text = srcEl.value, h = fileHandle;
+    if (unchanged()) return;
+    const gen = editGen, dg = docGen, st = stamped(srcEl.value), h = fileHandle;
     setSaving(true);
-    try { await writeTo(h, text); savedAt(gen, dg, `${h.name} に上書き保存しました(${stamp()})`); }
+    try { await writeTo(h, st.text); afterWrite(gen, dg, st, `${h.name} に上書き保存しました(${stamp()})`); }
     catch (e) { setStat(e?.name === 'AbortError' ? '上書き保存を取りやめました' : '上書きできませんでした。「別名で保存」を使ってください'); }
     finally { setSaving(false); }
     return;
   }
   if (FS_OK || !fileName) { saveAs(); return; }
   // ファイル操作機能がないブラウザ: 同じ名前でダウンロードする
-  downloadText(fileName);
-  setDirty(false);
+  if (unchanged()) return;
+  const st = stamped(srcEl.value);
+  downloadText(fileName, st.text);
+  afterWrite(editGen, docGen, st, '');
+  setStat('');
 }
 $('#btnSave').addEventListener('click', save);
 $('#btnSaveAs').addEventListener('click', saveAs);
@@ -2779,6 +2901,7 @@ $('#btnSaveAs').addEventListener('click', saveAs);
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
     e.preventDefault();
+    if (e.repeat) return; // 押し続けたときの繰り返しでは保存しない
     // 書きかけの欄があれば、先に書き込む(上書き保存ボタンを押したときと同じ)。拒否されたら保存しない
     if (pendingField && pendingField.commit({ keep: true }) === 'error') return;
     save();
@@ -2848,7 +2971,7 @@ setInterval(() => {
 
 // 開いたときは、前に編集していた内容を続ける(なければ空)
 // 上書きの先は覚えていないので、次の上書き保存では保存先を尋ねる(シンプルスライドと同じ)
-{ const d = restored(); setText(d ? d.text : '', d && typeof d.base === 'string' && d.base ? d.base : 'plan', { name: d && typeof d.name === 'string' ? d.name : '', dirty: !!d?.dirty, save: false }); }
+{ const d = restored(); setText(d ? d.text : '', d && typeof d.base === 'string' && d.base ? d.base : 'plan', { name: d && typeof d.name === 'string' ? d.name : '', dirty: !!d?.dirty, saved: d && typeof d.saved === 'string' ? d.saved : null, save: false }); }
 })();
 </script>
 </body>

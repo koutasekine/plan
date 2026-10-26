@@ -766,6 +766,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(/data-gx="[\d.]+"/.test(P.render(w, 'gantt').svg), 'つまみに目盛りの左端の位置がない');
   const pr = P.toPrompt([], 'x');
   ok(['off:(その人の休み)', '// から行末までは注', '「* 」「+ 」で始まるリスト', '__init__.py'].every((k) => pr.includes(k)), '修正依頼の文の書き方の要点');
+  ok(pr.includes('1 行目の「version: 日付」は保存した日で、アプリが書くので、そのまま残す'), '修正依頼の文の書き方の要点に version: がある');
 }
 // ---- 担当者別ガントチャート(仕様書 7.7 節)
 {
@@ -915,6 +916,59 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   const fl = b.bySec.FBS.filter((x) => !x.children.length).map((x) => x.id);
   const fs2 = fp.flatMap((p) => ids(p).filter((id) => fl.includes(id)));
   ok(sc(P.render(b, 'fbs').svg) >= 0.5 ? fp.length === 1 : fs2.length === fl.length && new Set(fs2).size === fl.length, 'FBS の木の分け方');
+}
+// ---- version:(仕様書 4.1 節・9 章)
+{
+  const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
+  const r0 = P.analyze(t);
+  const views = P.VIEWS.map((v) => v.id);
+  // 版の行があっても、図(位置の属性を除く)と日程は同じ
+  const tv = `version: 2026-01-01\n${t}`;
+  const rv = P.analyze(tv);
+  const strip = (svg) => svg.replace(/ data-(start|end)="\d+"/g, '');
+  ok(rv.ok && rv.diags.length === r0.diags.length && rv.sched.spanDays === r0.sched.spanDays && rv.sched.finishDate === r0.sched.finishDate, 'version: があっても日程と診断は同じ');
+  ok(views.every((v) => strip(P.render(rv, v).svg ?? '') === strip(P.render(r0, v).svg ?? '')), 'version: があっても図は同じ');
+  // 読めない日付・2 回・字下げは構文エラー
+  const e1 = P.analyze(`version: 2026-02-30\n${t}`);
+  ok(!e1.ok && e1.diags.some((d) => d.level === 'error' && d.line === 1 && d.message.includes('2026-02-30')), 'version: の読めない日付はエラー');
+  const e3 = P.analyze(`${t}  version: 2026-01-01\n`);
+  ok(!e3.ok && e3.diags.some((d) => d.level === 'error' && d.message.includes('字下げせず')), 'version: の字下げはエラー');
+  // setVersion: なければ 1 行目に足す。あれば書いてある場所のまま値だけ替える(注は残す)
+  ok(P.setVersion(t, '2026-10-26') === `version: 2026-10-26\n${t}`, 'version: がなければ 1 行目に足す');
+  ok(P.setVersion('version:\nstart: 2026-04-23\n', '2026-10-26') === 'version: 2026-10-26\nstart: 2026-04-23\n', '値のない version: に日付を入れる');
+  ok(P.setVersion('', '2026-10-26') === 'version: 2026-10-26\n', '空のテキストにも足す');
+  // stripVersion: 1 行目の version: の日付の部分だけを除く
+  ok(P.stripVersion(tv) !== P.stripVersion(tv.replace('days: 1', 'days:  1')), '空白 1 つの違いも違いとみなす');
+  ok(P.stripVersion('version: 2026-01-01\r\nstart: 2026-04-23\r\n') === 'version: \nstart: 2026-04-23\n', 'CRLF のテキストも読む');
+}
+// ---- version: は 1 行目にだけ書ける。比べるのは日付の部分だけを除いたテキスト(仕様書 3.3 節・9 章)
+{
+  const t = 'start: 2026-04-23\nmembers:\n- A\nWBS: W\n- t by: A days: 1\n';
+  const vmsg = (r) => r.diags.find((d) => d.level === 'error' && d.message.startsWith('version: は 1 行目にだけ'));
+  const r2 = P.analyze(`${t}version: 2026-01-01\n`);
+  ok(!r2.ok && vmsg(r2)?.line === 6 && P.misplacedVersion(`${t}version: 2026-01-01\n`) === 6, '2 行目以降の version: はエラー');
+  ok(vmsg(P.analyze(`  version: 2026-01-01\n${t}`))?.line === 1 && P.misplacedVersion(`  version: 2026-01-01\n${t}`) === 1, '字下げした 1 行目の version: はエラー');
+  ok(vmsg(P.analyze(`　version: 2026-01-01\n${t}`))?.line === 1, '全角空白で字下げした version: はエラー');
+  ok(vmsg(P.analyze(`　version: 2026-01-01\n${t}`))?.message.includes('全角空白'), '全角空白で字下げした version: の診断に全角空白と示す');
+  ok(P.analyze(`// version: 1\n${t}`).ok && P.misplacedVersion(`// version: 1\n${t}`) === null, '注の中の version: は節の行ではない');
+  const tn = t.replace('days: 1', 'days: 1 note: version: 2 を出す');
+  ok(P.analyze(tn).ok && P.misplacedVersion(tn) === null && P.setVersion(tn, '2026-10-26') === `version: 2026-10-26\n${tn}`, 'note: の中の version: は触らない');
+  ok(P.misplacedVersion(`version: 2026-01-01\n${t}`) === null && P.analyze(`version: 2026-01-01\n${t}`).ok, '1 行目の version: は正しい');
+  const v2 = `version: 2026-01-01\n${t}version: 2026-01-02\n`;
+  ok(!P.analyze(v2).ok && P.misplacedVersion(v2) === 7, '2 回書いた 2 つ目は正しくない場所');
+  // 日付の部分だけを替える
+  ok(P.setVersion(`version: 2025-12-31 // 初版\n${t}`, '2026-10-26') === `version: 2026-10-26 // 初版\n${t}`, '注を残して日付だけ替える');
+  ok(P.setVersion(`version:\n${t}`, '2026-10-26') === `version: 2026-10-26\n${t}`, '値のない version: に日付を入れる(空白を足す)');
+  ok(P.setVersion(`version:   \n${t}`, '2026-10-26') === `version: 2026-10-26   \n${t}`, '後ろの空白はそのまま残す');
+  ok(P.setVersion(`version: 2025-01-01//x\n${t}`, '2026-10-26') === `version: 2026-10-26\n${t}`, '注にならない //x は値ごと替える');
+  ok(P.setVersion(`version: 2025-01-01\r\n${t}`, '2026-10-26') === `version: 2026-10-26\n${t}`, 'CRLF のテキストにも日付を入れる');
+  // 比べるのは日付の部分だけを除いたテキスト
+  const sv = P.stripVersion;
+  ok(sv(`version: 2026-01-01\n${t}`) === sv(`version: 2026-10-26\n${t}`), '日付だけの違いは同じとみなす');
+  ok(sv(`version: 2026-01-01 // 初版\n${t}`) !== sv(`version: 2026-01-01 // 第2版\n${t}`), '注の違いは違いとみなす');
+  ok(sv(`version: 2026-01-01\n${t}`) !== sv(t), 'version: の行の有無は違いとみなす');
+  ok(sv(`version: abc\n${t}`) === sv(`version: 2026-01-01\n${t}`), '読めない日付も日付の部分として除く');
+  ok(sv(`version: 2026-01-01\n${t}`) !== sv(`version: 2026-01-01\n${t.replace('days: 1', 'days:  1')}`), '空白 1 つの違いも違いとみなす(1 行目に version: があるとき)');
 }
 // ---- SVG の埋め込みと取り出し
 {
