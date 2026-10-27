@@ -1,0 +1,15 @@
+# plan 版 0.31: 図・表ごとの「コピー」「SVG」「PNG」「PDF」のボタンを追加。「画像…」(ビュー全体の保存)と SVG へのテキストの埋め込みをやめた(これまでの SVG は開ける)。引き継ぎ文書(docs/handoff_*.md)は zip に入れない(受け取りの 1 行でリポジトリからも消す)。全ファイル投入可。
+# トップ: index.html(アプリ本体。これ 1 つで動く)・LICENSE・README.md。dev/(開発用。index.html はこれを読まない)・docs/(仕様書 版 0.31・AI 用のプロンプト)・test/(検査)
+5ec64f26876e09835b1e5e225c805086  LICENSE
+9b941aff49e17016095a4d8603b5045c  README.md
+4445eb5f963fcca42c4504b7ddf29a74  dev/build.py
+80d7dfac7d725305a8343571df57e331  dev/core.js
+64fdac8d90963d60e149fb6d422d6c0d  dev/help.html
+36992c076821da00a075fa70d12b6c87  dev/ui.js
+11826c0d863423276f28d630743bab88  docs/prompt_for_ai.md
+641fdd7154f832f9ba3f255c28469c04  docs/spec.md
+046485926dd309578bf1d73d64c89803  index.html
+0d7c533cc8754b6b48a30eaca7a46b1e  test/core_test.cjs
+434173cd56edce724e5331737225c78f  test/sample.plan
+bdbc8b744fb2ef82eca8aadbab775f19  test/slide_excerpt.plan
+b77b203f47b45233fb02e0a57ae13822  test/ui_edit_test.py
