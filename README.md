@@ -238,10 +238,10 @@ Edge・Chrome などの最近のブラウザで動きます。ネット接続が
 | パス | 内容 |
 |---|---|
 | `index.html` | アプリ本体(これ 1 つで動く) |
-| `core.js` | 計算部(解析・日程・図)。画面の処理を使わず、Node でも `require('./core.js')` で読める |
-| `ui.js` | 画面の処理 |
-| `help.html` | 画面の「書き方」の中身 |
-| `build.py` | `core.js`・`ui.js`・`help.html`・`test/sample.plan` から `index.html` を組み立てる(`python3 build.py`)。`index.html` は直接直さず、これで作り直す |
+| `dev/core.js` | 計算部(解析・日程・図)。画面の処理を使わず、Node でも `require('./dev/core.js')` で読める |
+| `dev/ui.js` | 画面の処理 |
+| `dev/help.html` | 画面の「書き方」の中身 |
+| `dev/build.py` | `dev/` のファイルと `test/sample.plan` から `index.html` を組み立てる(`python3 dev/build.py`)。`index.html` は直接直さず、これで作り直す |
 | `docs/prompt_for_ai.md` | 生成 AI に最初に渡す文書 |
 | `docs/spec.md` | 仕様書 |
 | `test/core_test.cjs` | 計算部の検査(`node test/core_test.cjs`)。`test/sample.plan`・`test/slide_excerpt.plan` はその入力 |

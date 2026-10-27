@@ -54,16 +54,16 @@
 
 - 上の未決事項を晃太さんに尋ね、裁定を得る。
 - 仕様書の案を作り、承認を得てから実装する。
-- 組み立ての台本(build.py)で、plan の core.js の計算部を新しいアプリの単一 HTML に埋め込む仕組みを作る。
+- 組み立ての台本(build.py)で、plan の dev/core.js の計算部を新しいアプリの単一 HTML に埋め込む仕組みを作る。
 
 ## 5. 使える既存の部品(plan リポジトリ)
 
-- `core.js` の `/*CORE-BEGIN*/` 〜 `/*CORE-END*/` が計算部。画面の処理を使わず、Node でも `require('./core.js')` で読める。`build.py` が index.html に埋め込む。`test/core_test.cjs` は index.html から計算部を取り出して検査する。
+- `dev/core.js` の `/*CORE-BEGIN*/` 〜 `/*CORE-END*/` が計算部。画面の処理を使わず、Node でも `require('./dev/core.js')` で読める。`dev/build.py` が index.html に埋め込む。`test/core_test.cjs` は index.html から計算部を取り出して検査する。
 - 公開している関数: `parse, analyze, stripVersion, setVersion, misplacedVersion, render, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit`。
 - `version:` の関数: `stripVersion(text)`(1 行目の `version:` の日付の部分を除いたテキスト)・`setVersion(text, date)`・`misplacedVersion(text)`(正しくない場所の `version:` の行の番号。なければ null)。版の日付そのものは `parse(text).sec.version.date`(1970-01-01 からの日数。`fmtDate` で文字にできる。`version:` がなければ `sec.version` がない)。
 - `analyze` の結果 `r`: `r.tasks`(葉の作業。`days` は 1/1000 日単位の整数、`by`・`review`・`status`、`d1` は終わり)、`r.sched`(`start`・`spanDays`)、`r.qname(n)`(修飾名)、`r.sec`(節)、`r.members` など。中身はコードを開いて確かめること。
 - 担当者ごとの作成の日数と稼働率は `peopleLoad(r)`、今日までの予定は `plannedByToday(r, today)`。
-- 印刷の仕組み(サマリーは縦、他は横、A4 横で 0.5 倍を下回るときは分ける)は `printPages`・`printPortrait` と build.py の印刷用 CSS。
+- 印刷の仕組み(サマリーは縦、他は横、A4 横で 0.5 倍を下回るときは分ける)は `printPages`・`printPortrait` と dev/build.py の印刷用 CSS。
 - 仕様書 `docs/spec.md`(版 0.29)。`version:` は 3.3 節・4.1 節・9 章、名前と参照は 3.7 節、日程の計算は 6 章、ビューは 7 章、未決の【提案】は 12 章(P1〜P26)。
 
 ## 6. 守ること
