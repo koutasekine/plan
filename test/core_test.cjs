@@ -20,7 +20,7 @@ const task = (r, name) => r.tasks.find((t) => t.name === name);
   const r = P.analyze(t);
   ok(r.ok && r.diags.length === 0, `例に診断が出た: ${r.diags.map((d) => d.message).join(' | ')}`);
   ok(r.cp.T === 14000, '例のクリティカルパスが 14 日でない');
-  ok(r.tasks.filter((x) => x.crit).map((x) => x.num).join(' ') === '1.2.1 2.2.1 3.2.1 3.2.4', `例のクリティカルパスの作業: ${r.tasks.filter((x) => x.crit).map((x) => x.num)}`);
+  ok(r.tasks.filter((x) => x.crit).map((x) => x.num).join(' ') === '1.2.1 2.2.1 3.2.1 3.2.4', `例のクリティカルパスのタスク: ${r.tasks.filter((x) => x.crit).map((x) => x.num)}`);
   ok(r.sched.finishDate <= r.sec.end.date, '例の日程が end: を超えた');
 }
 // ---- スライドの抜粋(対応が書かれていない要素があり、警告が出る)
@@ -31,7 +31,7 @@ const task = (r, name) => r.tasks.find((t) => t.name === name);
   const codes = warns(r).map((d) => d.cat).join(',');
   ok(/C1/.test(codes) && /C2/.test(codes) && /C4/.test(codes) && !/C3/.test(codes) && !/C5/.test(codes), `例の警告の種類: ${codes}`);
   ok(r.cp.T === 14000, 'クリティカルパスが 14 日でない(スライド 15 枚目: 1+7+3+3)');
-  ok(r.tasks.filter((x) => x.crit).map((x) => x.num).join(' ') === '1.2.1 2.2.1 3.2.1 3.2.2', 'クリティカルパスの作業がスライドと違う');
+  ok(r.tasks.filter((x) => x.crit).map((x) => x.num).join(' ') === '1.2.1 2.2.1 3.2.1 3.2.2', 'クリティカルパスのタスクがスライドと違う');
   // 決定性: 2 回の計算と描画が同じ
   const a = P.VIEWS.map((v) => P.render(P.analyze(t), v.id).svg).join('\n');
   const b = P.VIEWS.map((v) => P.render(P.analyze(t), v.id).svg).join('\n');
@@ -139,13 +139,13 @@ hasErr('WBS: X\n- a by: A days: 1 after: c\n- b by: A days: 1 after: a\n- c by: 
 
 // ---- 日程(仕様書 6 章)
 {
-  // 同じ人の 2 作業: 余裕の少ない方(最遅開始の早い方)が先
+  // 同じ人の 2 タスク: 余裕の少ない方(最遅開始の早い方)が先
   const r = run('WBS: X\n- a by: A days: 2\n- b by: A days: 3\n');
   ok(r.cp.T === 3000 && task(r, 'b').s === 0 && task(r, 'a').s === 3000 && r.sched.spanDays === 5, `資源の重なり: b ${task(r, 'b').s} a ${task(r, 'a').s}`);
   // 同じ余裕なら書いた順
   const r2 = run('WBS: X\n- a by: A days: 2\n- b by: A days: 2\n');
   ok(task(r2, 'a').s === 0 && task(r2, 'b').s === 2000, '同じ余裕で書いた順にならない');
-  // 小数と個人の休み: 2026-04-23 は木曜。A は金曜休み → 1.5 日の作業は 木 1 日 + 土 0.5 日
+  // 小数と個人の休み: 2026-04-23 は木曜。A は金曜休み → 1.5 日のタスクは 木 1 日 + 土 0.5 日
   const r3 = run('WBS: X\n- a by: A days: 1.5\n- b by: A days: 1 after: a\n', 'start: 2026-04-23\nmembers:\n- A off: fri\n');
   ok(task(r3, 'a').f === 2500 && task(r3, 'b').s === 2500 && task(r3, 'b').f === 3500, `小数と休み: a.f ${task(r3, 'a').f} b ${task(r3, 'b').s}-${task(r3, 'b').f}`);
   // 全体の休み(範囲)と開始日が休み
@@ -162,16 +162,16 @@ hasErr('WBS: X\n- a by: A days: 1 after: c\n- b by: A days: 1 after: a\n- c by: 
   // review: は日程に影響しない
   const r7 = run('WBS: X\n- a by: A days: 2\n- b by: B review: A days: 2\n');
   ok(task(r7, 'a').s === 0 && task(r7, 'b').s === 0, 'review: が日程に影響した');
-  // 0 日の作業
+  // 0 日のタスク
   const r8 = run('WBS: X\n- a by: A days: 2\n- m by: A days: 0 after: a\n');
-  ok(r8.ok && task(r8, 'm').s === 2000 && task(r8, 'm').f === 2000, '0 日の作業');
+  ok(r8.ok && task(r8, 'm').s === 2000 && task(r8, 'm').f === 2000, '0 日のタスク');
   ok(warns(r8).some((d) => /days: が 0 です/.test(d.message)), 'days: 0 の警告が出ない');
-  // 日数 0 の作業は、休みに当たっても送らず、前の作業の終わった日に属させる。日程の長さと end: の判定を延ばさない
+  // 日数 0 のタスクは、休みに当たっても送らず、前のタスクの終わった日に属させる。日程の長さと end: の判定を延ばさない
   const r9 = run('end: 2026-04-24\nWBS: X\n- a by: A days: 2\n- m by: A days: 0 after: a\n- n by: A after: a\n', 'start: 2026-04-23\noff: 2026-04-25..2026-04-27\nmembers:\n- A\n');
-  ok(r9.ok && task(r9, 'm').s === 2000 && task(r9, 'n').s === 2000 && task(r9, 'm').d1 === 1 && task(r9, 'n').d1 === 1, `日数 0 の作業の日: m ${task(r9, 'm').s} n ${task(r9, 'n').s} d1 ${task(r9, 'm').d1}`);
-  ok(r9.sched.spanDays === 2 && !warns(r9).some((d) => /超えています/.test(d.message)), `日数 0 の作業が日程を延ばした: span ${r9.sched.spanDays}`);
+  ok(r9.ok && task(r9, 'm').s === 2000 && task(r9, 'n').s === 2000 && task(r9, 'm').d1 === 1 && task(r9, 'n').d1 === 1, `日数 0 のタスクの日: m ${task(r9, 'm').s} n ${task(r9, 'n').s} d1 ${task(r9, 'm').d1}`);
+  ok(r9.sched.spanDays === 2 && !warns(r9).some((d) => /超えています/.test(d.message)), `日数 0 のタスクが日程を延ばした: span ${r9.sched.spanDays}`);
   const r10 = run('WBS: X\n- m by: A days: 0\n');
-  ok(r10.ok && task(r10, 'm').d0 === 0 && task(r10, 'm').d1 === 0 && r10.sched.spanDays === 1, '先行のない日数 0 の作業は 1 日目');
+  ok(r10.ok && task(r10, 'm').d0 === 0 && task(r10, 'm').d1 === 0 && r10.sched.spanDays === 1, '先行のない日数 0 のタスクは 1 日目');
 }
 
 // ---- レビューの指摘への修正
@@ -228,7 +228,7 @@ hasErr('WBS: X\n- a by: A days: 36501\n', /大きすぎます/);
 hasErr('WBS: X\n- a by: A days: 12345678901234567\n', /大きすぎます/);
 {
   const r = run('WBS: X\n- a by: A days: 36500\n');
-  ok(r.ok && r.sched.spanDays === 36500, '36500 日の作業が計算できない');
+  ok(r.ok && r.sched.spanDays === 36500, '36500 日のタスクが計算できない');
 }
 // 「-」の後の全角空白・NBSP
 hasErr('WBS: X\n-　a by: A days: 1\n', /半角の空白/);
@@ -526,7 +526,7 @@ for (let iter = 0; iter < 2000; iter++) {
     parallelPairs++;
     if (tasks[i].days && tasks[j].days && tasks[i].by.some((m) => tasks[j].by.includes(m))) contended++;
   }
-  // アローダイアグラム: 作業 q の終わりの事象から作業 t の始まりの事象へ道がある ⇔ q が t の先行(推移的)
+  // アローダイアグラム: タスク q の終わりの事象からタスク t の始まりの事象へ道がある ⇔ q が t の先行(推移的)
   const g = P.buildAOA(r.tasks);
   const startEv = new Map(), endEv = new Map();
   for (const a of g.arcs) if (a.task) { startEv.set(a.task, a.from); endEv.set(a.task, a.to); } else dummies++;
@@ -547,7 +547,7 @@ ok(parallelPairs > 10000 && contended > 3000 && dummies > 500, `乱数の例が�
 console.log(`乱数の例: 並行の組 ${parallelPairs}、資源を取り合う組 ${contended}、ダミー作業 ${dummies}`);
 console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日程の機械検査 ${schedChecked} 例`);
 
-// ---- 作業の状態(status:。仕様書 4.4 節・7.5 節・11.2 節)
+// ---- タスクの状態(status:。仕様書 4.4 節・7.5 節・11.2 節)
 {
   const r = run('WBS: X\n- g\n  - a by: A days: 1 status: done\n  - b by: A days: 1 status: doing\n  - c by: A days: 1 status: blocked\n  - d by: A days: 1 status: todo\n  - e by: A days: 1\n');
   ok(r.ok && !r.diags.length, `状態を書いた例に診断: ${r.diags.map((d) => d.message)}`);
@@ -557,7 +557,7 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
   hasErr('WBS: X\n- a by: A days: 1 status: done status: todo\n', /「status:」が同じ行に 2 回/);
   hasErr('FBS: F\n- a status: done\nWBS: X\n- a by: A days: 1\n', /「status:」は FBS: の要素には書けません/);
   const w = run('WBS: X status: done\n- g status: doing\n  - a by: A days: 1\n');
-  ok(w.ok && warns(w).filter((d) => /status: は末端の作業にだけ書けます/.test(d.message)).length === 2, '途中の要素と根の status: に警告が出ない');
+  ok(w.ok && warns(w).filter((d) => /status: は末端のタスクにだけ書けます/.test(d.message)).length === 2, '途中の要素と根の status: に警告が出ない');
   ok(task(w, 'a').status === 'todo', '途中の要素の status: を子が受け継いだ');
 }
 // 状態は日程に影響しない
@@ -580,18 +580,18 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
     const [bar, row] = gOf(g0, x);
     ok(bar && bar.includes(fills[x.status]) && Object.entries(fills).every(([k, f]) => k === x.status || !bar.includes(f)), `棒の塗りが状態と違う: ${x.name} ${x.status}`);
     ok(row && row.includes(`>${P.STATUS[x.status]}</text>`), `状態の列: ${x.name}`);
-    ok(row && !row.includes(`fill="#8b1a2b">${x.num} `), `ガントチャートで作業名を赤字にした: ${x.name}`);
+    ok(row && !row.includes(`fill="#8b1a2b">${x.num} `), `ガントチャートでタスク名を赤字にした: ${x.name}`);
   }
-  ok(r.tasks.some((x) => x.crit), '例にクリティカルパスの作業がない');
-  // 役割分担では、クリティカルパスの作業名の赤字を残す
+  ok(r.tasks.some((x) => x.crit), '例にクリティカルパスのタスクがない');
+  // 役割分担では、クリティカルパスのタスク名の赤字を残す
   const ro = P.render(r, 'roles').svg;
   ok(r.tasks.filter((x) => x.crit).every((x) => ro.includes(`fill="#8b1a2b">${x.num} `)), '役割分担のクリティカルパスの赤字が消えた');
-  // 今日を 2026-05-01 とする: 遅れは、完了でなく、2026-05-01 より前の日に終わる予定の作業
+  // 今日を 2026-05-01 とする: 遅れは、完了でなく、2026-05-01 より前の日に終わる予定のタスク
   const today = '2026-05-01', dn = Math.round(Date.UTC(2026, 4, 1) / 86400000);
   const g1 = P.render(r, 'gantt', { today }).svg;
   ok(g1 === P.render(P.analyze(t), 'gantt', { today }).svg, '同じ日付での描画が決定的でない');
   const late = r.tasks.filter((x) => x.status !== 'done' && r.sched.start + x.d1 < dn);
-  ok(late.length >= 1 && late.length < r.tasks.length, `遅れの作業の数が試験にならない: ${late.length}`);
+  ok(late.length >= 1 && late.length < r.tasks.length, `遅れのタスクの数が試験にならない: ${late.length}`);
   for (const x of r.tasks) ok(gOf(g1, x)[0].includes('>遅れ</text>') === late.includes(x), `遅れの印: ${x.name}`);
   ok((g1.match(/>遅れ<\/text>/g) ?? []).length === late.length + 1, '遅れの印の数(凡例を含む)');
   ok(/>今日<\/text>/.test(g1) && g1.includes('今日(2026-05-01)'), '今日の線か凡例がない');
@@ -604,13 +604,13 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
   // 範囲の外の今日: 線は引かないが、遅れは出す
   const g2 = P.render(r, 'gantt', { today: '2027-01-01' }).svg;
   ok(!/>今日<\/text>/.test(g2), '範囲の外に今日の線を引いた');
-  ok((g2.match(/>遅れ<\/text>/g) ?? []).length === r.tasks.filter((x) => x.status !== 'done').length + 1, '範囲の外の今日で、完了でない作業すべてが遅れにならない');
+  ok((g2.match(/>遅れ<\/text>/g) ?? []).length === r.tasks.filter((x) => x.status !== 'done').length + 1, '範囲の外の今日で、完了でないタスクすべてが遅れにならない');
   const g3 = P.render(r, 'gantt', { today: '2026-04-01' }).svg;
   ok(!/>今日<\/text>/.test(g3) && (g3.match(/>遅れ<\/text>/g) ?? []).length === 1, '開始より前の今日で遅れが出た');
-  // 開始日の今日は線を引く。日数 0 の作業(前の日に属する)の遅れ
+  // 開始日の今日は線を引く。日数 0 のタスク(前の日に属する)の遅れ
   const z = run('WBS: X\n- a by: A days: 1\n- b by: A days: 0 after: a\n- c by: B days: 2\n');
   const gz = P.render(z, 'gantt', { today: '2026-04-24' }).svg;
-  ok(gOf(gz, task(z, 'a'))[0].includes('>遅れ<') && gOf(gz, task(z, 'b'))[0].includes('>遅れ<') && !gOf(gz, task(z, 'c'))[0].includes('>遅れ<'), `日数 0 の作業の遅れ: d1=${task(z, 'b').d1}`);
+  ok(gOf(gz, task(z, 'a'))[0].includes('>遅れ<') && gOf(gz, task(z, 'b'))[0].includes('>遅れ<') && !gOf(gz, task(z, 'c'))[0].includes('>遅れ<'), `日数 0 のタスクの遅れ: d1=${task(z, 'b').d1}`);
   ok(/>今日<\/text>/.test(P.render(z, 'gantt', { today: '2026-04-23' }).svg), '開始日に今日の線がない');
   // 最後の列の翌日には線を引かない(列がないため)。最後の列の日には引く
   const z3 = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: X\n- a by: A days: 3\n');
@@ -634,14 +634,14 @@ console.log(`アローダイアグラムの機械検査 ${aoaChecked} 例、日�
   const r = P.analyze(base);
   const id = (n) => task(r, n).id;
   const x0 = E.setStatus(r, id('a'), 'todo');
-  ok(!x0.error && x0.text === base, '書いていない作業で todo を選んだのに書き足した');
+  ok(!x0.error && x0.text === base, '書いていないタスクで todo を選んだのに書き足した');
   const x1 = E.setStatus(r, id('a'), 'blocked');
   ok(!x1.error && x1.text === base.replace('days: 1 // 注', 'days: 1 status: blocked // 注'), `status: の書き足し: ${JSON.stringify(x1)}`);
   const x2 = E.setStatus(r, id('b'), 'done');
   ok(!x2.error && x2.text === base.replace('status: doing', 'status: done'), 'status: の値の置き換え');
   const x3 = E.setStatus(r, id('b'), 'todo');
   ok(!x3.error && x3.text === base.replace('status: doing', 'status: todo'), '書いてある status: を todo にしたとき');
-  ok(/作業/.test(E.setStatus(r, r.bySec.WBS.find((n) => n.name === 'g').id, 'done').error ?? ''), '途中の要素に状態を書けた');
+  ok(/タスク/.test(E.setStatus(r, r.bySec.WBS.find((n) => n.name === 'g').id, 'done').error ?? ''), '途中の要素に状態を書けた');
   ok(!!E.setStatus(r, id('a'), 'finished').error, '4 つ以外の状態を書けた');
   ok(!!E.rename(r, id('a'), 'x status: y').error && !!E.setAttr(r, id('a'), 'note', 'x status: y').error, '「空白 + status:」を名前・値に書けた');
   for (const x of [x1, x2, x3]) { const r2 = P.analyze(x.text); ok(r2.ok && !r2.diags.length, '状態の書き換えの後に診断が出た'); }
@@ -750,7 +750,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   }
   console.log(`MOP の欄の書き換え: 試行 ${tries}、書き込み ${wrote}`);
 }
-// ---- ガントチャートの期間の上限、休みを除いた作業の長さ、修正依頼の文(仕様書 7.5 節・11.3 節・10 章)
+// ---- ガントチャートの期間の上限、休みを除いたタスクの長さ、修正依頼の文(仕様書 7.5 節・11.3 節・10 章)
 {
   const g = (end, days) => P.render(P.analyze(`start: 2026-04-23\n${end ? `end: ${end}\n` : ''}members:\n- A\nWBS: X\n- a by: A days: ${days}\n`), 'gantt');
   const big = g('2126-04-23', 1);
@@ -775,20 +775,20 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   const ld = P.peopleLoad(r);
   // 例: 期間は 2026-04-23 〜 end: 2026-05-14 の 22 日、休みなし
   ok(ld.nDays === 22 && ld.rows.map((x) => `${x.m.name}:${x.days}/${x.cap}`).join(' ') === '青木:8000/22 井上:8000/22 上田:16000/22', `例の作成の日数と作業できる日数: ${ld.rows.map((x) => `${x.m.name}:${x.days}/${x.cap}`).join(' ')}`);
-  ok(ld.rows.every((x) => x.days === r.tasks.filter((k) => k.by.includes(x.m)).reduce((a, k) => a + k.days, 0)), '作成の日数が作業の日数の合計と違う');
+  ok(ld.rows.every((x) => x.days === r.tasks.filter((k) => k.by.includes(x.m)).reduce((a, k) => a + k.days, 0)), '作成の日数がタスクの日数の合計と違う');
   const g = P.render(r, 'people', {}).svg;
   ok(g.includes('>36%<') && g.includes('>73%<') && g.includes('>16 日<'), '稼働率と日数の表示');
-  ok(r.tasks.every((k) => (g.match(new RegExp(`data-id="${k.id}"`, 'g')) ?? []).length === k.by.length), '作業の棒が担当者の数だけない');
+  ok(r.tasks.every((k) => (g.match(new RegExp(`data-id="${k.id}"`, 'g')) ?? []).length === k.by.length), 'タスクの棒が担当者の数だけない');
   ok(g === P.render(P.analyze(t), 'people', {}).svg, '担当者別ガントチャートが決定的でない');
   // 並べ替え: 作成の日数・稼働率の少ない順・多い順。同じなら書いた順
   const order = (sort) => [...P.render(r, 'people', { sort }).svg.matchAll(/data-id="m(\d+)"/g)].map((m) => +m[1]).join('');
   ok(order(null) === '012' && order({ key: 'days', dir: 'asc' }) === '012' && order({ key: 'days', dir: 'desc' }) === '201' && order({ key: 'rate', dir: 'desc' }) === '201', `並べ替え: ${order({ key: 'days', dir: 'desc' })}`);
   ok(P.render(r, 'people', { sort: { key: 'days', dir: 'desc' } }).svg.includes('作成の日数 ▼') && P.render(r, 'people', { sort: { key: 'rate', dir: 'asc' } }).svg.includes('稼働率 ▲'), '並べ替えの印');
   ok(order({ key: 'bad', dir: 'asc' }) === '012', '知らない並べ替えは書いた順');
-  // 複数人の作業・担当なし・本人の休み・稼働率 100% 超え
+  // 複数人のタスク・担当なし・本人の休み・稼働率 100% 超え
   const x = P.analyze('start: 2026-05-01\noff: sat, sun\nmembers:\n- A off: 2026-05-04..2026-05-06\n- B\n- C\nWBS: W\n- p by: A, B days: 2\n- q by: B days: 3\n- n days: 1\n- c by: C days: 1 review: A, B\n');
   const lx = P.peopleLoad(x);
-  ok(lx.rows.map((k) => `${k.m.name}:${k.days}/${k.cap}/${k.review}`).join(' ') === 'A:2000/3/1 B:5000/6/1 C:1000/6/0', `複数人の作業・本人の休み: ${lx.rows.map((k) => `${k.m.name}:${k.days}/${k.cap}/${k.review}`).join(' ')}`);
+  ok(lx.rows.map((k) => `${k.m.name}:${k.days}/${k.cap}/${k.review}`).join(' ') === 'A:2000/3/1 B:5000/6/1 C:1000/6/0', `複数人のタスク・本人の休み: ${lx.rows.map((k) => `${k.m.name}:${k.days}/${k.cap}/${k.review}`).join(' ')}`);
   ok(lx.none && lx.none.tasks.map((k) => k.name).join() === 'n' && lx.none.days === 1000, '担当なしの行');
   const gx = P.render(x, 'people', {}).svg;
   ok(gx.includes('>(担当なし)<') && gx.includes('>67%<') && gx.includes('>83%<') && gx.includes('>17%<') && gx.includes('fill="url(#hatch)"'), '担当なしの行・稼働率・本人の休みの斜線');
@@ -813,7 +813,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   const g = P.render(r, 'summary', { today }).svg;
   ok(['>実行前<', '>5 件<', '>11 日<', '>7 日<', '>3 日<', '>15 件<', '>32 日<'].every((k) => g.includes(k)), '状態ごとの件数と日数');
   ok(g.includes('完了 34%(日数)、53%(件数)'), '完了の割合');
-  // 今日までに終わる予定: 休みのない例なので、各作業の [開始, 終わり] と [0, 今日の始まり] の重なりの合計
+  // 今日までに終わる予定: 休みのない例なので、各タスクの [開始, 終わり] と [0, 今日の始まり] の重なりの合計
   const T = (dn - r.sched.start) * 1000;
   const plan = r.tasks.reduce((a, k) => a + Math.max(0, Math.min(k.f, T) - k.s), 0);
   ok(P.plannedByToday(r, dn) === plan && g.includes(`今日までに終わる予定: ${P.fmtDays(plan)} 日分`), `今日までに終わる予定: ${P.plannedByToday(r, dn)} / ${plan}`);
@@ -826,7 +826,7 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(g === P.render(P.analyze(t), 'summary', { today }).svg, 'サマリーが決定的でない');
   ok(P.render(r, 'summary', {}).svg.includes('今日の日付がないため、比べられません。'), '今日の日付がないとき');
   const bl = r.tasks.find((k) => k.status === 'blocked');
-  ok(P.render(r, 'summary', { today: '2026-04-24' }).svg.includes(`data-id="${bl.id}"`) && P.render(r, 'summary', {}).svg.includes(`data-id="${bl.id}"`), '遅れていない問題発生の作業も表に出す');
+  ok(P.render(r, 'summary', { today: '2026-04-24' }).svg.includes(`data-id="${bl.id}"`) && P.render(r, 'summary', {}).svg.includes(`data-id="${bl.id}"`), '遅れていない問題発生のタスクも表に出す');
   ok(P.render(r, 'summary', { today: '2026-04-01' }).svg.includes('今日までに終わる予定: 0 日分') && P.render(r, 'summary', { today: '2026-12-01' }).svg.includes(`今日までに終わる予定: 32 日分`), '今日が期間の前と後');
   // 予定どおり・進んでいる
   const ahead = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- a by: A days: 2 status: done\n- b by: A days: 2 after: a\n');
@@ -843,14 +843,14 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(!P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- a by: A days: 1\n'), 'summary', { today }).svg.includes('テスト項目(MOP)'), 'FBS がないときは MOP を出さない');
   const nt = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- a days: 1\n');
   ok(P.render(nt, 'summary', { today }).svg.includes('>(担当なし)<'), '担当なしの行');
-  ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n'), 'summary', { today }).svg.includes('作業 0 件'), '作業がない計画');
+  ok(P.render(P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n'), 'summary', { today }).svg.includes('タスク 0 件'), 'タスクがない計画');
 }
 // ---- 印刷のページ(仕様書 9 章): 半分より小さくなるビューだけ分ける
 {
   const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
   const r = P.analyze(t);
   ok(P.VIEWS.every((v) => { const ps = P.printPages(r, v.id, { today: '2026-04-30' }); return ps.length === 1 && ps[0] === P.render(r, v.id, { today: '2026-04-30' }).svg; }), '例は、どのビューも 1 ページで、画面の図と同じ');
-  // 大きな計画: 7 つのフェーズ、各フェーズに 3 つのまとまり、各まとまりに 3 つの作業
+  // 大きな計画: 7 つのフェーズ、各フェーズに 3 つのまとまり、各まとまりに 3 つのタスク
   let txt = 'start: 2026-05-20\nend: 2026-07-14\nmembers:\n' + Array.from({ length: 7 }, (_, i) => `- m${i}\n`).join('') + 'FBS: F\n';
   for (let i = 0; i < 8; i++) { txt += `- f${i}\n`; for (let j = 0; j < 4; j++) txt += `  - f${i}_${j} mop: 項目${i}_${j} mop*: 済${i}_${j}\n`; }
   txt += 'WBS: W\n';
@@ -860,24 +860,24 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(b.ok, `大きな計画にエラー: ${b.diags.filter((d) => d.level === 'error').map((d) => d.message)}`);
   const sc = (svg) => { const m = /width="(\d+)" height="(\d+)"/.exec(svg); return Math.min(1, 1047 / m[1], 718 / m[2]); };
   const ids = (svg) => [...svg.matchAll(/data-id="(n\d+)"/g)].map((m) => m[1]);
-  // WBS の木: 分けたページで、作業がちょうど 1 回ずつ出て、各ページは半分以上の大きさ
+  // WBS の木: 分けたページで、タスクがちょうど 1 回ずつ出て、各ページは半分以上の大きさ
   const wp = P.printPages(b, 'wbs');
   const leafIds = b.tasks.map((x) => x.id);
   const seen = wp.flatMap((p) => ids(p).filter((id) => leafIds.includes(id)));
   ok(sc(P.render(b, 'wbs').svg) < 0.5 && wp.length > 1, `WBS の木を分けていない: ${wp.length}`);
-  ok(seen.length === leafIds.length && new Set(seen).size === leafIds.length, `WBS の作業が 1 回ずつ出ない: ${seen.length}/${leafIds.length}`);
+  ok(seen.length === leafIds.length && new Set(seen).size === leafIds.length, `WBS のタスクが 1 回ずつ出ない: ${seen.length}/${leafIds.length}`);
   ok(wp.every((p) => sc(p) >= 0.5), `WBS の分けたページが半分より小さい: ${wp.map(sc)}`);
   ok(wp.every((p) => ids(p).includes(b.sec.WBS.root.id)), 'WBS の分けたページに根がない');
-  // 役割分担: 作業の行が 1 回ずつ。担当者ごとのまとめは 1 回
+  // 役割分担: タスクの行が 1 回ずつ。担当者ごとのまとめは 1 回
   const rp = P.printPages(b, 'roles');
   const rs = rp.flatMap((p) => ids(p).filter((id) => leafIds.includes(id)));
   ok(sc(P.render(b, 'roles').svg) < 0.5 && rp.length > 1 && rs.length === leafIds.length && new Set(rs).size === leafIds.length, `役割分担の行: ${rp.length} ページ、${rs.length} 行`);
   ok(rp.filter((p) => p.includes('担当者ごとのまとめ')).length === 1 && rp.every((p) => sc(p) >= 0.5), '役割分担のまとめと大きさ');
-  // アローダイアグラム: 矢印の図と作業の表を分け、表の行が 1 回ずつ
+  // アローダイアグラム: 矢印の図とタスクの表を分け、表の行が 1 回ずつ
   const ap = P.printPages(b, 'aoa');
   ok(ap.length >= 2 && !ap[0].includes('>管理番号<') && ap.slice(1).every((p) => p.includes('>管理番号<') && !p.includes('<circle')), 'アローダイアグラムの図と表を分ける');
-  ok(P.printPortrait('aoa', 0) === false && P.printPortrait('aoa', 1) && P.printPortrait('summary', 0) && !P.printPortrait('roles', 1), '縦向きのページ(サマリーとアローダイアグラムの作業の表)');
-  ok(ap.slice(1).every((p) => { const m = /width="(\d+)" height="(\d+)"/.exec(p); return Math.min(1, 718 / m[1], 1047 / m[2]) === 1; }) && ap.slice(1, -1).every((p) => +/height="(\d+)"/.exec(p)[1] > 718), 'アローダイアグラムの作業の表は縦向きの大きさで区切る');
+  ok(P.printPortrait('aoa', 0) === false && P.printPortrait('aoa', 1) && P.printPortrait('summary', 0) && !P.printPortrait('roles', 1), '縦向きのページ(サマリーとアローダイアグラムのタスクの表)');
+  ok(ap.slice(1).every((p) => { const m = /width="(\d+)" height="(\d+)"/.exec(p); return Math.min(1, 718 / m[1], 1047 / m[2]) === 1; }) && ap.slice(1, -1).every((p) => +/height="(\d+)"/.exec(p)[1] > 718), 'アローダイアグラムのタスクの表は縦向きの大きさで区切る');
   const at = ap.slice(1).flatMap((p) => [...p.matchAll(/<g data-id="(n\d+)"[^>]*><rect/g)].map((m) => m[1]));
   ok(at.length === leafIds.length && new Set(at).size === leafIds.length, `アローダイアグラムの表の行: ${at.length}`);
   // ガントチャート・担当者別: 行が 1 回ずつ。各ページは幅で決まる大きさ以上

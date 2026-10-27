@@ -86,7 +86,7 @@ async def main():
         check('after: ユーザ登録CRUD用API URI, 通知用API URI' in t, 'ドラッグで after: が足される')
         check(await same() is True, '依存の追加の直後、図がテキストと一致')
         added = await pg.input_value('#src')
-        # 逆向き(後の作業から前の作業へ)に引くと循環になるので、書き換えない
+        # 逆向き(後のタスクから前のタスクへ)に引くと循環になるので、書き換えない
         x1,y1 = await onpath(ids[1]); x2,y2 = await onpath(ids[0])
         await pg.mouse.move(x1,y1); await pg.mouse.down(); await pg.mouse.move(x2,y2, steps=8); await pg.mouse.up(); await pg.wait_for_timeout(150)
         msg = await pg.evaluate("() => document.querySelector('#edit .editerr')?.textContent ?? ''")
@@ -185,7 +185,7 @@ async def main():
         check(await pg.input_value('#src') == orig2, 'Escape でドラッグを取り消す')
         await pg.mouse.move(x,y); await pg.mouse.down(); await pg.mouse.move(x+60,y, steps=5); await pg.mouse.move(5,5, steps=5); await pg.mouse.up(); await pg.wait_for_timeout(150)
         check(await pg.input_value('#src') == orig2, '図の外で離すと取り消す')
-        # 1.3 日の作業を 1 日分伸ばすと 2.5 日(0.5 の倍数にそろえる)
+        # 1.3 日のタスクを 1 日分伸ばすと 2.5 日(0.5 の倍数にそろえる)
         await pg.select_option('#viewKind','wbs'); await pg.wait_for_timeout(100)
         await pick('カレンダデザイン')
         inp = pg.locator('#edit label:has-text("日数") input')
@@ -210,7 +210,7 @@ async def main():
         sl = pg.locator('#edit label:has-text("状態") select')
         opts = await sl.evaluate("s => [...s.options].map(o => o.text).join(' ')")
         check(opts == '実行前(todo) 実行中(doing) 完了(done) 問題発生(blocked)', f'状態の欄の選択肢: {opts}')
-        check(await sl.input_value() == 'todo', '書いていない作業の状態の欄は実行前')
+        check(await sl.input_value() == 'todo', '書いていないタスクの状態の欄は実行前')
         await sl.select_option('doing'); await pg.wait_for_timeout(150)
         t = await pg.input_value('#src')
         check('カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装 status: doing\n' in t, '状態を選ぶと status: を書き足す')
@@ -241,7 +241,7 @@ async def main():
         check(await pg.evaluate("() => document.activeElement?.tagName === 'SELECT'"), '書きかけを書き込んだ後、状態の欄に入力が移る')
         await pg.keyboard.press('Escape')
         await undo_all(); check(await pg.input_value('#src') == orig, '書きかけの書き込みを Ctrl+Z で戻せる')
-        # 今日の線は描いてある(例の日程より後なので範囲の外なら線はない)。遅れの印は完了でない作業の数だけ
+        # 今日の線は描いてある(例の日程より後なので範囲の外なら線はない)。遅れの印は完了でないタスクの数だけ
         n_late = await pg.evaluate("() => document.querySelectorAll('#canvas text').length && [...document.querySelectorAll('#canvas g[data-id] text')].filter(t => t.textContent === '遅れ').length")
         exp = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const d = new Date(); const dn = Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); return r.tasks.filter(t => t.status !== 'done' && dn > r.sched.start + t.d1).length; }")
         check(n_late == exp, f'遅れの印の数 {n_late} / {exp}')
@@ -357,14 +357,14 @@ async def main():
         await pg.evaluate("() => { const s = document.querySelector('#src'); s.setSelectionRange(0, 0); }")
         await pg.evaluate("() => document.querySelector('#canvas [data-id][data-start]').dispatchEvent(new MouseEvent('click', {bubbles: true}))")
         check(await pg.evaluate("() => { const s = document.querySelector('#src'); return s.selectionStart === s.selectionEnd; }"), 'エラーの間の薄い図を押しても、テキストの範囲を選ばない')
-        # ガントチャートのつまみをクリックすると、その作業を選ぶ。休みをまたぐドラッグは休みを除いて数える
+        # ガントチャートのつまみをクリックすると、そのタスクを選ぶ。休みをまたぐドラッグは休みを除いて数える
         T9 = 'start: 2026-05-01\noff: sat, sun\nmembers:\n- A\nWBS: W\n- t days: 1 by: A\n- u days: 1 by: A after: t\n'
         await load(T9)
         await pg.select_option('#viewKind','gantt'); await pg.wait_for_timeout(200)
         tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks[0].id")
         await pg.click(f"#canvas [data-handle='{tid}']"); await pg.wait_for_timeout(150)
         check(await pg.evaluate("() => document.querySelector('#edit').classList.contains('on')") and '- t days: 1' in (await pg.inner_text('#edit') + '- t days: 1'), 'つまみをクリックすると選択が外れない')
-        check(await pg.locator('#edit label:has-text("名前") input').input_value() == 't', 'つまみをクリックすると、その作業を選ぶ')
+        check(await pg.locator('#edit label:has-text("名前") input').input_value() == 't', 'つまみをクリックすると、そのタスクを選ぶ')
         bb = await pg.locator(f"#canvas [data-handle='{tid}']").bounding_box()
         dw = await pg.evaluate("(id) => { const h = document.querySelector(`#canvas [data-handle='${id}']`); const svg = h.ownerSVGElement; return 24 * svg.getScreenCTM().a; }", tid)
         x, y = bb['x'] + bb['width'] / 2, bb['y'] + bb['height'] / 2
@@ -394,20 +394,20 @@ async def main():
         check(await pg.locator('#edit label:has-text("名前") input').input_value() == '上田', '担当者の欄を押すと担当者を選ぶ')
         tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks.find(x => x.name === '予定登録CRUD用APIの実装').id")
         await pg.locator(f"#canvas g[data-id='{tid}'] rect").first.click(); await pg.wait_for_timeout(150)
-        check(await pg.locator('#edit label:has-text("名前") input').input_value() == '予定登録CRUD用APIの実装', '棒を押すと作業を選ぶ')
+        check(await pg.locator('#edit label:has-text("名前") input').input_value() == '予定登録CRUD用APIの実装', '棒を押すとタスクを選ぶ')
         await pg.locator('#edit label:has-text("状態") select').select_option('done'); await pg.wait_for_timeout(200)
         check(await names() == '上田,青木,井上' and await same() is True, '編集の後も並びを保ち、図がテキストと一致')
         await undo_all()
         await pg.reload(); await pg.wait_for_timeout(500)
         await pg.select_option('#viewKind','people'); await pg.wait_for_timeout(200)
         check(await names() == '青木,井上,上田', '開き直すと並びは書いた順(保存しない)')
-        # サマリー: 図はテキストから描いたものと一致し、遅れと問題発生の行を押すと作業を選ぶ
+        # サマリー: 図はテキストから描いたものと一致し、遅れと問題発生の行を押すとタスクを選ぶ
         await load(orig)
         await pg.select_option('#viewKind','summary'); await pg.wait_for_timeout(200)
-        check(await same() is True and '作業の進み具合' in await pg.inner_html('#canvas'), 'サマリーを描く')
+        check(await same() is True and 'タスクの進み具合' in await pg.inner_html('#canvas'), 'サマリーを描く')
         bid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks.find(x => x.status === 'blocked').id")
         await pg.locator(f"#canvas g[data-id='{bid}'] rect").first.click(); await pg.wait_for_timeout(150)
-        check(await pg.locator('#edit label:has-text("名前") input').input_value() == '通知用APIの実装', 'サマリーの行を押すと作業を選ぶ')
+        check(await pg.locator('#edit label:has-text("名前") input').input_value() == '通知用APIの実装', 'サマリーの行を押すとタスクを選ぶ')
         await pg.locator('#edit label:has-text("状態") select').select_option('done'); await pg.wait_for_timeout(200)
         check(await same() is True and not await pg.locator(f"#canvas g[data-id='{bid}']").count(), '状態を完了にすると、サマリーの遅れと問題発生の表から消える')
         await undo_all()
@@ -829,7 +829,7 @@ async def main():
         pdf = await pp.pdf(prefer_css_page_size=True)
         check(len(re.findall(rb'/Type\s*/Page[^s]', pdf)) == len(vs), '分けたページも 1 枚ずつ印刷される')
         boxes = [tuple(float(v) for v in m) for m in re.findall(rb'/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]', pdf)]
-        check(''.join('P' if w < h else 'L' for w, h in boxes) == por and por[0] == 'P' and ''.join('P' if (v == 'aoa' and vs[:i].count('aoa') > 0) or v == 'summary' else 'L' for i, v in enumerate(vs)) == por, f'アローダイアグラムの作業の表は縦向き: {por}')
+        check(''.join('P' if w < h else 'L' for w, h in boxes) == por and por[0] == 'P' and ''.join('P' if (v == 'aoa' and vs[:i].count('aoa') > 0) or v == 'summary' else 'L' for i, v in enumerate(vs)) == por, f'アローダイアグラムのタスクの表は縦向き: {por}')
         await pp.emulate_media(media='screen')
         # FBS のない計画では、FBS を使うビューを飛ばす
         await pp.evaluate("() => { const s = document.querySelector('#src'); s.value = 'start: 2026-04-23\\nmembers:\\n- A\\nWBS: W\\n- t by: A days: 1\\n'; s.dispatchEvent(new Event('input')); }")
