@@ -72,6 +72,9 @@ textarea#src::selection{background:rgba(139,26,43,.25);color:transparent}
 #msg .bar{display:flex;gap:8px;align-items:center;justify-content:space-between}
 #msg button{font-size:12px;padding:2px 8px}
 #view{flex:1;overflow:auto;background:#fff;position:relative}
+#canvas{position:relative}
+#canvas .tbtns{position:absolute;display:flex;gap:4px;z-index:2;white-space:nowrap;width:max-content}
+#canvas .tbtns button{font-size:11px;line-height:1.2;padding:1px 7px;border-radius:3px;white-space:nowrap;flex:none}
 #view svg{display:block}
 #view.stale svg{opacity:.45}
 #view [data-id]{cursor:pointer}
@@ -126,6 +129,9 @@ footer a{color:#777}
   #printArea .page{break-after:page;page-break-after:always;display:flex;align-items:flex-start;justify-content:center;box-sizing:border-box;height:calc(100vh - 1px);padding:10mm;overflow:hidden}
   #printArea .page:last-child{break-after:auto;page-break-after:auto}
   #printArea svg{max-width:100%;max-height:100%;width:auto;height:auto}
+  /* 図・表を 1 つだけ印刷するとき(題の右の「PDF」): 紙はその図と同じ大きさ、余白 0(紙の指定は画面から入れる) */
+  #printArea.one .page{padding:0;display:block;break-after:auto;page-break-after:auto}
+  #printArea.one svg{display:block;max-width:none;max-height:none}
 }
 </style>
 </head>
@@ -133,14 +139,9 @@ footer a{color:#777}
 <header>
   <h1>プロジェクト計画</h1>
   <button id="btnNew">新規</button>
-  <button id="btnOpen" title="テキスト(.plan・.txt)か、プロジェクト計画で保存した SVG を開く">開く</button><input type="file" id="fileOpen" accept=".plan,.txt,.svg" style="display:none">
+  <button id="btnOpen" title="テキスト(.plan・.txt)か、版 0.30 までに「画像…」で保存した SVG を開く">開く</button><input type="file" id="fileOpen" accept=".plan,.txt,.svg" style="display:none">
   <button id="btnSave" title="開いているファイルに上書き保存(Ctrl+S。まだファイルがないときは保存先を選ぶ)">上書き保存</button>
   <button id="btnSaveAs" title="保存先とファイル名を選んでテキスト(.plan)を保存">別名で保存</button>
-  <select id="exportImg" title="表示中のビューを画像で保存(SVG はテキストを埋め込むので、このアプリで開き直せる)">
-    <option value="">画像…</option>
-    <option value="svg" title="テキストを埋め込むので、このアプリで開き直せる">SVG</option>
-    <option value="png">PNG</option>
-  </select>
   <button id="btnPrint" title="描けるビューをすべて、1 ページに 1 つずつ印刷する(印刷の画面で「PDF に保存」を選ぶと PDF になる)">印刷 / PDF</button>
   <span id="fileName" class="fname"></span>
   <span id="stat" class="stat" role="status"></span>

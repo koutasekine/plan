@@ -65,6 +65,7 @@ function analyze() {
     draw();
   } else if (canvasEl.querySelector('svg')) {
     viewEl.classList.add('stale');
+    canvasEl.querySelectorAll('.tbtns').forEach((x) => x.remove()); // 薄く出している図は保存しない(テキストと食い違うため)
     select(null); // エラーの間は、最後に描けた図を薄く出す
   } else {
     canvasEl.textContent = '';
@@ -78,14 +79,123 @@ function draw() {
   if (!r) return;
   let o;
   drawnToday = todayStr();
-  try { o = Plan.render(r, viewKindEl.value, { today: drawnToday, sort: peopleSort }); }
-  catch (e) { showInternal(`内部エラー(描画): ${e.message}`); return; }
+  const col = { anchors: [], tables: [] }; // 表と題の位置(題の右にボタンを置くため)
+  try { o = Plan.render(r, viewKindEl.value, { today: drawnToday, sort: peopleSort, collect: col }); }
+  catch (e) { canvasEl.querySelectorAll('.tbtns').forEach((x) => x.remove()); showInternal(`内部エラー(描画): ${e.message}`); return; }
   // 試験で、表示中の図をテキストから描き直して比べるために、並びを残しておく(data-sort とは別の名前にする)
   if (peopleSort) canvasEl.dataset.peopleSort = `${peopleSort.key}:${peopleSort.dir}`; else delete canvasEl.dataset.peopleSort;
   viewEl.classList.toggle('stale', r !== last);
-  if (o.svg) { canvasEl.innerHTML = o.svg; shownSvg = o.svg; }
+  if (o.svg) { canvasEl.innerHTML = o.svg; shownSvg = o.svg; if (r === last) addPieceButtons(Plan.anchorsOf(r, viewKindEl.value, o.svg, col)); }
   else { canvasEl.textContent = ''; canvasEl.append(el('div', 'empty', o.message)); shownSvg = null; }
   reselect();
+}
+
+// ---- 図・表を 1 つずつ保存する・コピーする(仕様書 9 章)
+// 各図・各表の題の文字のすぐ右に、表は「コピー」「SVG」「PNG」「PDF」、図は「SVG」「PNG」「PDF」を置く。
+// ボタンは図の上に重ねる画面の部品で、保存する画像や印刷には出ない。押しても図の上の操作(選ぶ・ドラッグ)は始めない
+const PIECE_TIP = {
+  copy: (n) => `「${n}」の表をタブ区切りの文字でコピーする(表計算ソフトや Word の表にそのまま貼れる)`,
+  svg: (n, t) => (t ? `「${n}」の表を SVG(ベクター形式)で保存する(題は入れない)` : 'この図を SVG(ベクター形式)で保存する'),
+  png: (n, t) => (t ? `「${n}」の表を PNG(2 倍の解像度)で保存する(題は入れない)` : 'この図を PNG(2 倍の解像度)で保存する'),
+  pdf: (n, t) => `${t ? `「${n}」の表` : 'この図'}だけを、同じ大きさの紙で印刷する(印刷の画面で「PDF に保存」を選ぶと、余白のない PDF になる。Chrome・Edge で使う)`,
+};
+// 表は題(ファイル名に使う題)で指す(描き直しで表の数が変わっても、押した表を取り違えないため)
+function addPieceButtons(anchors) {
+  for (const a of anchors) {
+    const isT = a.kind === 'table';
+    const name = isT ? a.name : a.id;
+    const box = el('span', 'tbtns');
+    for (const k of isT ? ['copy', 'svg', 'png', 'pdf'] : ['svg', 'png', 'pdf']) {
+      const b = el('button', null, k === 'copy' ? 'コピー' : k.toUpperCase());
+      b.dataset.piece = `${isT ? 'table' : 'fig'}:${name}|${k}`;
+      b.title = PIECE_TIP[k](name, isT);
+      b.addEventListener('click', () => pieceAction(isT ? 'table' : 'fig', name, k, b));
+      box.append(b);
+    }
+    // 下の図に押したことを伝えない(選択を外したり、ドラッグを始めたりしないため)
+    for (const ev of ['pointerdown', 'mousedown', 'click', 'dblclick']) box.addEventListener(ev, (e) => e.stopPropagation());
+    canvasEl.append(box);
+    placeBox(box, a);
+  }
+}
+function pieceAction(kind, ref, k, btn) {
+  // 描き直しが残っていれば先に描き直し、日付が変わっていれば今日の線と遅れの印を描き直してから保存する
+  if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
+  if (todayStr() !== drawnToday && last?.ok) draw();
+  if (!last?.ok || viewEl.classList.contains('stale')) { alert('保存できる図がありません(エラーを直してください)'); return; }
+  const view = viewKindEl.value;
+  let p;
+  try { p = Plan.pieces(last, view, { today: drawnToday, sort: peopleSort }); }
+  catch (e) { showInternal(`内部エラー(描画): ${e.message}`); return; }
+  // 描き直しでボタンが作り直されていれば、新しいボタンに「コピーしました」を出す
+  const cur = [...canvasEl.querySelectorAll('.tbtns button')].find((b) => b.dataset.piece === btn.dataset.piece) ?? btn;
+  if (kind === 'table') {
+    const t = p.tables.find((x) => x.name === ref);
+    if (!t) { alert(`「${ref}」の表は、今はありません(描き直したら表がなくなりました)`); return; }
+    if (k === 'copy') { copyText(Plan.tsv(t), cur); return; }
+    saveImage(t.svg, `${imgBase()}_${view}_${safeName(t.name)}`, k);
+    return;
+  }
+  const f = p.figs.find((x) => x.id === ref);
+  if (f) saveImage(f.svg, `${imgBase()}_${view}_${f.id}`, k);
+}
+// ボタンを題の文字に合わせる。文字の枠の中心はフォントによって上下にずれるので使わず、
+// 題とボタンの文字の基準線から見た目の中心を求めて(和文の字面の中心は、基準線から文字の大きさの約 0.38 倍上)、中心どうしをそろえる
+const GLYPH_MID = 0.38;
+function placeBox(box, a) {
+  const svg = canvasEl.querySelector('svg');
+  const texts = svg ? [...svg.querySelectorAll('text')].filter((t) => t.textContent === a.label) : [];
+  if (!texts.length) { box.remove(); return; }
+  const near = texts.reduce((q, t) => (Math.abs(+t.getAttribute('y') - a.y) < Math.abs(+q.getAttribute('y') - a.y) ? t : q));
+  const c = canvasEl.getBoundingClientRect(), sv = svg.getBoundingClientRect(), tr = near.getBoundingClientRect();
+  const titleMid = sv.top - c.top + +near.getAttribute('y') - GLYPH_MID * +near.getAttribute('font-size');
+  // ボタンの文字の基準線: ボタンの中に置いた大きさ 0 の印の下端
+  const btn = box.querySelector('button');
+  const mark = document.createElement('span');
+  mark.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+  btn.append(mark);
+  const bb = mark.getBoundingClientRect().bottom - box.getBoundingClientRect().top;
+  mark.remove();
+  box.style.left = `${tr.right - c.left + 6}px`;
+  box.style.top = `${titleMid + GLYPH_MID * parseFloat(getComputedStyle(btn).fontSize) - bb}px`;
+}
+// ファイル名に使えない文字と空白を「_」にする
+const safeName = (s) => s.replace(/[\\/:*?"<>|\s]+/g, '_');
+const imgBase = () => safeName(fileBase);
+// SVG に紙の大きさの指定を入れる(保存した SVG をブラウザで開いて印刷したときにも、同じ大きさの紙になるように)
+const withPage = (svg) => { const [, w, h] = /width="([\d.]+)" height="([\d.]+)"/.exec(svg); const i = svg.indexOf('>', svg.indexOf('<svg')); return `${svg.slice(0, i + 1)}<style>@page{size:${w}px ${h}px;margin:0}</style>${svg.slice(i + 1)}`; };
+// 図または表を 1 つだけ、同じ大きさの紙で印刷する(ブラウザの「PDF に保存」で、余白のない PDF になる)。アプリの中で PDF は作らない
+const uniqIds = (svg, pre) => svg.replace(/ id="([^"]+)"/g, ` id="${pre}$1"`).replace(/url\(#([^)]+)\)/g, `url(#${pre}$1)`);
+function printOne(svg, base) {
+  const [, w, h] = /width="([\d.]+)" height="([\d.]+)"/.exec(svg).map(Number);
+  const area = $('#printArea');
+  area.textContent = ''; area.classList.add('one');
+  const pg = el('div', 'page'); pg.style.width = `${w}px`; pg.style.height = `${h}px`; pg.innerHTML = uniqIds(svg, 'p1-'); area.append(pg);
+  let st = $('#pageOne');
+  if (!st) { st = document.createElement('style'); st.id = 'pageOne'; document.head.append(st); }
+  st.textContent = `@media print{@page{size:${w}px ${h}px;margin:0}}`;
+  const title = document.title; document.title = base; // 「PDF に保存」のファイル名の候補になる
+  try { window.print(); } finally { document.title = title; }
+}
+function saveImage(svg, base, kind) {
+  if (kind === 'pdf') { printOne(svg, base); return; }
+  if (kind === 'svg') { download(`${base}.svg`, new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${withPage(svg)}`], { type: 'image/svg+xml' })); return; }
+  const scale = 2;
+  const m = /width="(\d+)" height="(\d+)"/.exec(svg);
+  const w = +m[1], h = +m[2];
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  const big = () => alert('画像が大きすぎて PNG にできませんでした。SVG で保存してください');
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const c = document.createElement('canvas'); c.width = w * scale; c.height = h * scale;
+    const g = c.getContext('2d');
+    if (!g) { big(); return; }
+    g.scale(scale, scale); g.drawImage(img, 0, 0);
+    c.toBlob((b) => { if (b) download(`${base}.png`, b); else big(); }, 'image/png');
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert('PNG の作成に失敗しました'); };
+  img.src = url;
 }
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -127,10 +237,19 @@ function renderDiagnostics(diags) {
 function showInternal(m) { msgEl.prepend(el('div', 'err', m)); }
 
 async function copyText(text, btn) {
+  let ok = true;
   try { await navigator.clipboard.writeText(text); }
-  catch { const ta = document.createElement('textarea'); ta.value = text; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-  const t = btn.textContent; btn.textContent = 'コピーしました'; setTimeout(() => { btn.textContent = t; }, 1500);
+  catch {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.append(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+  }
+  if (btn.dataset.label === undefined) btn.dataset.label = btn.textContent;
+  clearTimeout(copyTimers.get(btn));
+  btn.textContent = ok ? 'コピーしました' : 'コピーできませんでした';
+  copyTimers.set(btn, setTimeout(() => { btn.textContent = btn.dataset.label; }, 2000));
 }
+const copyTimers = new WeakMap();
 
 // ---- 図の要素を選ぶ・図から編集する
 // テキストが正本。図での編集は、Plan.Edit がテキストの書き換えに直し、applyEdit がテキスト欄に書き込む。
@@ -314,7 +433,9 @@ document.addEventListener('pointerdown', (e) => {
   const so = canvasEl.contains(e.target) ? e.target.closest('[data-sort]') : null;
   let action = null;
   const fld = e.target.closest('#edit select, #edit input, #edit textarea');
-  if (so) action = { kind: 'sort', key: so.getAttribute('data-sort') };
+  const pb = e.target.closest('#canvas .tbtns button');
+  if (pb) action = { kind: 'piece', key: pb.dataset.piece };
+  else if (so) action = { kind: 'sort', key: so.getAttribute('data-sort') };
   else if (btn) action = { kind: 'button', label: btn.textContent };
   else if (fld) action = { kind: 'focus', label: fld.parentElement.firstChild.textContent };
   else if (g?.hasAttribute('data-handle')) { const n = Plan.Edit.find(last, g.getAttribute('data-handle')); if (n) action = { kind: 'node', key: Plan.Edit.keyOf(n) }; }
@@ -339,6 +460,7 @@ function replay() {
   pendingReplay = null;
   if (!a || a.kind === 'none' || !last?.ok) return;
   if (a.kind === 'sort') { toggleSort(a.key); return; }
+  if (a.kind === 'piece') { [...canvasEl.querySelectorAll('.tbtns button')].find((b) => b.dataset.piece === a.key)?.click(); return; }
   if (a.kind === 'focus') { const l = [...editEl.querySelectorAll('label')].find((x) => x.firstChild?.textContent === a.label); l?.querySelector('select,input,textarea')?.focus(); return; }
   if (a.kind === 'button') { const b = [...editEl.querySelectorAll('button')].find((x) => x.textContent === a.label && !x.disabled); b?.click(); return; }
   if (a.kind === 'rel') { const ids = a.keys.map((k) => Plan.Edit.locate(last, k)); if (ids.every(Boolean)) selectRel(ids.join('|')); return; }
@@ -536,36 +658,6 @@ viewKindEl.addEventListener('change', () => { selectedId = null; draw(); });
 
 // ---- 保存
 function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
-$('#exportImg').addEventListener('change', () => {
-  const v = $('#exportImg').value; $('#exportImg').value = '';
-  if (!v) return;
-  // 描き直しが残っていれば、先に描き直す(図と埋め込むテキストを食い違わせないため)
-  if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
-  // 日付が変わっていれば、今日の線と遅れの印を描き直してから保存する
-  if (todayStr() !== drawnToday && last?.ok) draw();
-  const svg = !viewEl.classList.contains('stale') && shownSvg;
-  if (!svg) { alert('保存できる図がありません(エラーを直すか、描けるビューを選んでください)'); return; }
-  const base = `${fileBase}_${viewKindEl.value}`;
-  if (v === 'svg') { download(`${base}.svg`, new Blob([Plan.embedSource(svg, srcEl.value)], { type: 'image/svg+xml' })); return; }
-  if (v === 'png') {
-    const scale = 2;
-    const m = /width="(\d+)" height="(\d+)"/.exec(svg);
-    const w = +m[1], h = +m[2];
-    const img = new Image();
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const c = document.createElement('canvas'); c.width = w * scale; c.height = h * scale;
-      const g = c.getContext('2d');
-      if (!g) { alert('図が大きすぎて PNG にできませんでした。SVG で保存してください'); return; }
-      g.scale(scale, scale); g.drawImage(img, 0, 0);
-      c.toBlob((b) => { if (b) download(`${base}.png`, b); else alert('図が大きすぎて PNG にできませんでした。SVG で保存してください'); }, 'image/png');
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); alert('PNG の作成に失敗しました'); };
-    img.src = url;
-  }
-});
-
 // ---- テキストのファイル: 新規・開く・上書き保存・別名で保存(仕様書 9 章。シンプルスライドと同じ作り)
 // Chrome・Edge はファイル操作機能で、開いたファイルにそのまま上書きする。ない場合はダウンロードで保存する
 const FS_OK = typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
@@ -582,7 +674,7 @@ const baseOf = (name) => name.replace(/\.[^.]*$/, '') || 'plan';
 
 function openFile(file, handle, handleP) {
   const isSvg = /\.svg$/i.test(file.name);
-  if (!isSvg && !/\.(plan|txt)$/i.test(file.name)) { alert(`${file.name} は開けません。開けるのは .plan(.txt)と、プロジェクト計画で保存した .svg です。`); return; }
+  if (!isSvg && !/\.(plan|txt)$/i.test(file.name)) { alert(`${file.name} は開けません。開けるのは .plan(.txt)と、版 0.30 までに「画像…」で保存した .svg です。`); return; }
   const r = new FileReader();
   r.onload = () => {
     let text;
@@ -613,7 +705,7 @@ window.addEventListener('drop', (e) => {
   // 上書きの先にするため、ファイルの扱いを受け取る(Chrome・Edge。ドロップの処理の中で呼ぶ必要がある)
   const it = e.dataTransfer.items?.[0];
   const hp = it && typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle() : null;
-  if (!/\.(plan|txt|svg)$/i.test(f.name)) { alert(`${f.name} は開けません。開けるのは .plan(.txt)と、プロジェクト計画で保存した .svg です。`); return; }
+  if (!/\.(plan|txt|svg)$/i.test(f.name)) { alert(`${f.name} は開けません。開けるのは .plan(.txt)と、版 0.30 までに「画像…」で保存した .svg です。`); return; }
   if (!okToDiscard()) return;
   openFile(f, null, hp);
 });
@@ -773,7 +865,8 @@ window.addEventListener('keydown', (e) => {
 // ---- 印刷 / PDF(仕様書 9 章): サマリー → 残りのビューを選択欄の順に、描けるものを 1 ページに 1 つずつ。図のほかには何も足さない
 function buildPrint() {
   const area = $('#printArea');
-  area.textContent = '';
+  area.textContent = ''; area.classList.remove('one');
+  { const st = $('#pageOne'); if (st) st.textContent = ''; } // 1 つだけの印刷の紙の指定を残さない
   if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
   if (!last?.ok) return 0;
   const ids = ['summary', ...Plan.VIEWS.map((v) => v.id).filter((id) => id !== 'summary')];
@@ -786,7 +879,7 @@ function buildPrint() {
       const page = el('div', 'page');
       page.dataset.view = id;
       if (Plan.printPortrait(id, i)) page.dataset.portrait = '1';
-      page.innerHTML = svg;
+      page.innerHTML = uniqIds(svg, `p${n + 1}-`); // 画面の図や、ほかのページと id が重ならないように
       area.append(page);
       n++;
     });
@@ -798,7 +891,7 @@ $('#btnPrint').addEventListener('click', () => {
   if (!buildPrint()) { alert('印刷できる図がありません(エラーを直してください)'); return; }
   window.print();
 });
-window.addEventListener('afterprint', () => { $('#printArea').textContent = ''; });
+window.addEventListener('afterprint', () => { const a = $('#printArea'); a.textContent = ''; a.classList.remove('one'); const st = $('#pageOne'); if (st) st.textContent = ''; });
 
 // ---- 上の帯のボタン
 $('#btnNew').addEventListener('click', () => { if (okToDiscard()) setText('', 'plan'); });

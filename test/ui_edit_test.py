@@ -1,6 +1,6 @@
 # 図からの編集の検査(Chromium)。python3 test/ui_edit_test.py で実行する(playwright と chromium が要る)
 # 各操作で、テキストが正しく書き換わること、図がテキストから描いたものと一致すること、Ctrl+Z で戻せることを確かめる
-import asyncio, pathlib
+import asyncio, pathlib, re
 from playwright.async_api import async_playwright
 fails=[]
 def check(c,msg):
@@ -18,7 +18,7 @@ async def main():
         async def same():
             return await pg.evaluate("""() => { const r = Plan.analyze(document.querySelector('#src').value); if (!r.ok) return 'error';
               const d = new Date(), pd = (n) => String(n).padStart(2, '0'); const cs = document.querySelector('#canvas').dataset.peopleSort; const sort = cs ? { key: cs.split(':')[0], dir: cs.split(':')[1] } : null; const o = Plan.render(r, document.querySelector('#viewKind').value, { today: `${d.getFullYear()}-${pd(d.getMonth() + 1)}-${pd(d.getDate())}`, sort }); const t = document.createElement('div'); t.innerHTML = o.svg ?? '';
-              const c = document.querySelector('#canvas').cloneNode(true); c.querySelectorAll('.selected').forEach(e => { e.classList.remove('selected'); if (!e.getAttribute('class')) e.removeAttribute('class'); }); return t.innerHTML === c.innerHTML; }""")
+              const c = document.querySelector('#canvas').cloneNode(true); c.querySelectorAll('.tbtns').forEach(e => e.remove()); c.querySelectorAll('.selected').forEach(e => { e.classList.remove('selected'); if (!e.getAttribute('class')) e.removeAttribute('class'); }); return t.innerHTML === c.innerHTML; }""")
         async def undo_all():
             await pg.focus('#src')
             for _ in range(10):
@@ -648,7 +648,7 @@ async def main():
         await pv.focus('#src'); await pv.keyboard.press('Control+End'); await pv.keyboard.type('Z'); await pv.wait_for_timeout(300)
         before = await vsrc()
         async with pv.expect_download() as dl:
-            await pv.select_option('#exportImg', 'svg')
+            await pv.click('#canvas .tbtns button[data-piece$="|svg"]')
         await dl.value
         check(await vsrc() == before and '2025-05-05' in before, 'version: 画像の保存では変えない')
         # 新規・例の後は比べる相手がないので、保存で日付を足す
@@ -853,7 +853,7 @@ async def main():
         check('今日(2026-04-30)' in await pg2.inner_html('#canvas'), '保存の前の図は 04-30')
         await pg2.clock.run_for(20000)
         async with pg2.expect_download() as dl:
-            await pg2.select_option('#exportImg', 'svg')
+            await pg2.click('#canvas .tbtns button[data-piece="fig:gantt|svg"]')
         svg = open(await (await dl.value).path(), encoding='utf-8').read()
         check('今日(2026-05-01)' in svg and '今日(2026-04-30)' not in svg, '日付が変わった後の保存は、今日の日付で描き直した図')
         await pg2.close()
@@ -882,9 +882,162 @@ async def main():
             await pg3.clock.run_for(70000); await pg3.wait_for_timeout(100)
             check(mark in await pg3.inner_html('#canvas'), f'日付が変わると描き直す({view})')
             async with pg3.expect_download() as dl:
-                await pg3.select_option('#exportImg', 'svg')
+                await pg3.click('#canvas .tbtns button[data-piece^="fig:"][data-piece$="|svg"]')
             check(mark in open(await (await dl.value).path(), encoding='utf-8').read(), f'保存する画像も新しい日付({view})')
             await pg3.close()
+        # 14. 図・表ごとの「コピー」「SVG」「PNG」「PDF」(仕様書 9 章)
+        cx = await b.new_context(viewport={'width':1600,'height':1000}, accept_downloads=True)
+        await cx.grant_permissions(['clipboard-read', 'clipboard-write'])
+        pq = await cx.new_page()
+        pq.on('pageerror', lambda e: errs.append(str(e)))
+        await pq.add_init_script("window.__printed = []; window.print = () => { window.__printed.push({ title: document.title, one: document.querySelector('#printArea').classList.contains('one'), page: document.querySelector('#pageOne')?.textContent ?? '' }); };")
+        await pq.goto('file://'+str((pathlib.Path(__file__).resolve().parent.parent / 'index.html')))
+        await pq.click('#btnSample'); await pq.wait_for_timeout(300)
+        check(await pq.locator('#exportImg').count() == 0, '上の帯に「画像…」はない')
+        # 置き場所: 題の文字のすぐ右(間は 3〜9 px)、文字の見た目の中心のずれは 1.5 px 以内。並びは表がコピー・SVG・PNG・PDF、図が SVG・PNG・PDF
+        POS = """() => { const c = document.querySelector('#canvas'), svg = c.querySelector('svg'), out = [];
+          for (const box of c.querySelectorAll('.tbtns')) {
+            const b0 = box.getBoundingClientRect(), btn = box.querySelector('button');
+            const ts = [...svg.querySelectorAll('text')].map((t) => [t, t.getBoundingClientRect()]).filter(([, r]) => r.right <= b0.left + 0.5 && r.right >= b0.left - 20 && Math.abs((r.top + r.bottom) / 2 - (b0.top + b0.bottom) / 2) < 20);
+            if (!ts.length) { out.push({ ok: false, why: 'no title' }); continue; }
+            const [t, r] = ts.reduce((a, q) => (q[1].right > a[1].right ? q : a));
+            const fsT = +t.getAttribute('font-size'), base = svg.getBoundingClientRect().top + +t.getAttribute('y');
+            const mk = document.createElement('span'); mk.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; btn.append(mk);
+            const bb = mk.getBoundingClientRect().bottom; mk.remove();
+            const fsB = parseFloat(getComputedStyle(btn).fontSize);
+            out.push({ label: t.textContent, gap: b0.left - r.right, dy: (base - 0.38 * fsT) - (bb - 0.38 * fsB), btns: [...box.querySelectorAll('button')].map((x) => x.textContent).join(' ') });
+          }
+          return out; }"""
+        want = {'fbs': 1, 'pbs': 1, 'match': 1, 'wbs': 1, 'aoa': 2, 'roles': 2, 'gantt': 1, 'people': 1, 'mop': 1, 'summary': 4}
+        tables = {'aoa': ['タスクの表'], 'roles': ['役割分担: カレンダーアプリ', '担当者ごとのまとめ'], 'mop': ['テスト項目(MOP): カレンダーアプリ'], 'summary': ['タスクの進み具合', '遅れと問題発生', '担当者ごとの状況']}
+        for v, n in want.items():
+            await pq.select_option('#viewKind', v); await pq.wait_for_timeout(250)
+            ps = await pq.evaluate(POS)
+            okpos = len(ps) == n and all(x.get('label') and 3 <= x['gap'] <= 9 and abs(x['dy']) <= 1.5 for x in ps)
+            okord = all((x['btns'] == 'コピー SVG PNG PDF') == (x['label'] in tables.get(v, [])) and x['btns'] in ('コピー SVG PNG PDF', 'SVG PNG PDF') for x in ps if x.get('label'))
+            check(okpos and okord, f'ボタンの位置と並び({v}): {ps}')
+        # コピー: タブ区切り、1 行目は見出し、まとめたセルは各行に書く。2 秒「コピーしました」。続けて押しても元の文に戻る
+        await pq.select_option('#viewKind', 'roles'); await pq.wait_for_timeout(250)
+        cp = pq.locator('#canvas .tbtns button[data-piece="table:役割分担|copy"]')
+        await cp.click(); await pq.wait_for_timeout(200)
+        clip = await pq.evaluate("() => navigator.clipboard.readText()")
+        exp = await pq.evaluate("() => Plan.tsv(Plan.pieces(Plan.analyze(document.querySelector('#src').value), 'roles').tables[0])")
+        lines = clip.split('\n')
+        check(clip == exp and lines[0] == '第 1 層\t第 2 層\tタスク\t作成\t確認\t日数' and lines[1].startswith('1 設計フェーズ\t1.1 基本設計\t1.1.1 カレンダデザイン\t') and lines[2].startswith('1 設計フェーズ\t1.2 詳細設計\t') and '\r' not in clip, f'表のコピー: {lines[:3]}')
+        check(await cp.text_content() == 'コピーしました', 'コピーの直後は「コピーしました」')
+        await pq.wait_for_timeout(500); await cp.click(); await pq.wait_for_timeout(1700)
+        check(await cp.text_content() == 'コピーしました', '続けて押すと、2 秒数え直す')
+        await pq.wait_for_timeout(500)
+        check(await cp.text_content() == 'コピー', '続けて押しても元の文に戻る')
+        # SVG: 表には題を入れない。紙の指定が入り、ボタン・説明・操作の印は入らない
+        async def dl_of(sel):
+            async with pq.expect_download() as d:
+                await pq.click(sel)
+            dd = await d.value
+            return dd.suggested_filename, open(await dd.path(), 'rb').read()
+        nm, data = await dl_of('#canvas .tbtns button[data-piece="table:役割分担|svg"]')
+        t = data.decode('utf-8')
+        m = re.search(r'<svg [^>]*width="(\d+)" height="(\d+)"', t)
+        check(nm == 'sample_roles_役割分担.svg' and f'<style>@page{{size:{m[1]}px {m[2]}px;margin:0}}</style>' in t and '役割分担: ' not in t and '担当者ごとのまとめ' not in t and '1.1.1 カレンダデザイン' in t and 'tbtns' not in t and '<title>' not in t and 'data-' not in t, f'表の SVG: {nm}')
+        nm2, _ = await dl_of('#canvas .tbtns button[data-piece="table:担当者ごとのまとめ|svg"]')
+        check(nm2 == 'sample_roles_担当者ごとのまとめ.svg', f'表の SVG のファイル名: {nm2}')
+        await pq.select_option('#viewKind', 'gantt'); await pq.wait_for_timeout(250)
+        nm, data = await dl_of('#canvas .tbtns button[data-piece="fig:gantt|svg"]')
+        t = data.decode('utf-8')
+        check(nm == 'sample_gantt_gantt.svg' and 'クリティカルパス' in t and '@page{size:' in t and 'data-handle' not in t, f'図の SVG(題を入れる): {nm}')
+        # PNG: 2 倍の解像度
+        nm, data = await dl_of('#canvas .tbtns button[data-piece="fig:gantt|png"]')
+        w0, h0 = [int(x) for x in re.search(r'<svg [^>]*width="(\d+)" height="(\d+)"', t).groups()]
+        pw, ph = int.from_bytes(data[16:20], 'big'), int.from_bytes(data[20:24], 'big')
+        check(nm == 'sample_gantt_gantt.png' and data[:8] == b'\x89PNG\r\n\x1a\n' and (pw, ph) == (2 * w0, 2 * h0), f'図の PNG: {nm} {pw}x{ph}')
+        await pq.select_option('#viewKind', 'people'); await pq.wait_for_timeout(250)
+        nm, _ = await dl_of('#canvas .tbtns button[data-piece="fig:gantt-people|svg"]')
+        check(nm == 'sample_people_gantt-people.svg', f'担当者別ガントチャートの識別子: {nm}')
+        # PDF: その図だけを、同じ大きさの紙(余白 0)で 1 ページに印刷する。印刷の後は紙の指定を残さない
+        await pq.select_option('#viewKind', 'roles'); await pq.wait_for_timeout(250)
+        title0 = await pq.title()
+        await pq.click('#canvas .tbtns button[data-piece="table:担当者ごとのまとめ|pdf"]'); await pq.wait_for_timeout(200)
+        pr = await pq.evaluate("() => window.__printed[window.__printed.length - 1]")
+        sv = await pq.evaluate("() => Plan.pieces(Plan.analyze(document.querySelector('#src').value), 'roles').tables[1].svg")
+        w1, h1 = [int(x) for x in re.search(r'width="(\d+)" height="(\d+)"', sv).groups()]
+        check(pr['one'] and pr['title'] == 'sample_roles_担当者ごとのまとめ' and pr['page'] == f'@media print{{@page{{size:{w1}px {h1}px;margin:0}}}}' and await pq.title() == title0, f'PDF の印刷の指定: {pr}')
+        pdf = await pq.pdf(prefer_css_page_size=True)
+        boxes = re.findall(rb'/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]', pdf)
+        check(len(boxes) == 1 and abs(float(boxes[0][0]) - w1 * 0.75) < 1 and abs(float(boxes[0][1]) - h1 * 0.75) < 1, f'PDF は表と同じ大きさの 1 ページ: {boxes} / {w1}x{h1}px')
+        await pq.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
+        check(await pq.evaluate("() => [document.querySelector('#printArea').childElementCount, document.querySelector('#printArea').classList.contains('one'), document.querySelector('#pageOne').textContent]") == [0, False, ''], '印刷の後は紙の指定を残さない')
+        await pq.click('#btnPrint'); await pq.wait_for_timeout(300)
+        pr = await pq.evaluate("() => window.__printed[window.__printed.length - 1]")
+        check(not pr['one'] and pr['page'] == '' and await pq.evaluate("() => document.querySelectorAll('#printArea .page').length") > 5, '「PDF」の後も、いつもの印刷 / PDF は全部のビュー')
+        await pq.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
+        # 押しても図の上の操作は始まらない(選んでいる要素はそのまま)
+        await pq.select_option('#viewKind', 'gantt'); await pq.wait_for_timeout(250)
+        await pq.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+        await pq.wait_for_timeout(150)
+        sel0 = await pq.evaluate("() => [document.querySelectorAll('#canvas .selected').length, document.querySelector('#edit label input')?.value]")
+        b0 = pq.locator('#canvas .tbtns button[data-piece="fig:gantt|svg"]')
+        bx = await b0.bounding_box()
+        async with pq.expect_download() as d:
+            await pq.mouse.move(bx['x'] + 5, bx['y'] + 5); await pq.mouse.down(); await pq.mouse.move(bx['x'] + 9, bx['y'] + 7); await pq.mouse.up()
+        await d.value
+        await pq.wait_for_timeout(150)
+        check(sel0[0] > 0 and await pq.evaluate("() => [document.querySelectorAll('#canvas .selected').length, document.querySelector('#edit label input')?.value]") == sel0 and await pq.input_value('#src') == orig, f'ボタンを押しても選択は変わらず、編集も始まらない: {sel0}')
+        # 書きかけの欄があれば、先に書き込んでから保存する
+        f = pq.locator('#edit label:has-text("メモ") input')
+        await f.fill('書きかけのメモ')
+        async with pq.expect_download() as d:
+            await pq.click('#canvas .tbtns button[data-piece="fig:gantt|svg"]')
+        await d.value
+        await pq.wait_for_timeout(150)
+        check('note: 書きかけのメモ' in await pq.input_value('#src'), '書きかけを書き込んでから保存する')
+        # エラーで図を薄く表示している間は、ボタンを置かない
+        await pq.focus('#src'); await pq.keyboard.press('Control+End'); await pq.keyboard.type('\nこれは誤り'); await pq.wait_for_timeout(500)
+        check(await pq.locator('#canvas .tbtns').count() == 0, 'エラーの間はボタンを置かない')
+        # 描き直しで表の数が変わっても、押した表をコピー・保存する。描き直した後のボタンに「コピーしました」を出す
+        late = 'start: 2026-04-20\nmembers:\n- A\nWBS: R\n- t1 days: 2 by: A\n- t2 days: 1 status: done by: A\n'
+        await pq.evaluate("(t) => { const e = document.querySelector('#src'); e.value = t; e.dispatchEvent(new Event('input')); }", late); await pq.wait_for_timeout(400)
+        await pq.select_option('#viewKind', 'summary'); await pq.wait_for_timeout(250)
+        has_late = await pq.locator('#canvas .tbtns button[data-piece="table:遅れと問題発生|copy"]').count()
+        # テキストで t1 を完了にし、描き直しの前(250 ms 以内)に押す。描き直すと遅れの表がなくなり、表の数が変わる
+        await pq.evaluate("() => { const e = document.querySelector('#src'); e.focus(); e.setSelectionRange(e.value.indexOf('by: A\\n- t2'), e.value.indexOf('by: A\\n- t2')); }")
+        await pq.keyboard.type('status: done ')
+        await pq.click('#canvas .tbtns button[data-piece="table:担当者ごとの状況|copy"]'); await pq.wait_for_timeout(200)
+        clip = await pq.evaluate("() => navigator.clipboard.readText()")
+        lbl = await pq.locator('#canvas .tbtns button[data-piece="table:担当者ごとの状況|copy"]').text_content()
+        check(has_late == 1 and clip.startswith('担当者\t実行前\t') and await pq.locator('#canvas .tbtns button[data-piece="table:遅れと問題発生|copy"]').count() == 0 and lbl == 'コピーしました', f'描き直しで表の数が変わっても、押した表をコピーし、「コピーしました」を出す: {clip[:20]!r} {lbl}')
+        # 図の欄が狭くても、ボタンは折り返さず、題の文字と中心がそろう
+        await pq.evaluate("() => { document.querySelector('#left').style.width = '700px'; document.querySelector('#left').style.flex = 'none'; }")
+        await pq.set_viewport_size({'width': 1000, 'height': 800})
+        pq.on('dialog', lambda d: asyncio.ensure_future(d.accept()))
+        await pq.click('#btnSample'); await pq.wait_for_timeout(300)
+        await pq.select_option('#viewKind', 'roles'); await pq.wait_for_timeout(250)
+        ps = await pq.evaluate(POS)
+        hs = await pq.evaluate("() => [...document.querySelectorAll('#canvas .tbtns')].map((b) => b.getBoundingClientRect().height)")
+        check(len(ps) == 2 and all(abs(x['dy']) <= 1.5 for x in ps) and max(hs) < 24, f'図の欄が狭くてもボタンは折り返さない: {ps} {hs}')
+        await pq.set_viewport_size({'width': 1600, 'height': 1000})
+        await pq.evaluate("() => { document.querySelector('#left').style.width = ''; document.querySelector('#left').style.flex = ''; }")
+        # 印刷の領域に入れる図は、模様の id が画面の図と重ならない(担当者の休みの斜線が PDF でも描かれる)
+        hol = 'start: 2026-04-20\nmembers:\n- A off: 2026-04-21, 2026-04-22\nWBS: R\n- t1 days: 5 by: A\n'
+        await pq.evaluate("(t) => { const e = document.querySelector('#src'); e.value = t; e.dispatchEvent(new Event('input')); }", hol); await pq.wait_for_timeout(400)
+        await pq.select_option('#viewKind', 'gantt'); await pq.wait_for_timeout(250)
+        await pq.click('#canvas .tbtns button[data-piece="fig:gantt|pdf"]'); await pq.wait_for_timeout(200)
+        ids = await pq.evaluate("() => { const all = [...document.querySelectorAll('[id]')].map((e) => e.id); const urls = [...document.querySelectorAll('#printArea [fill^=\"url(\"]')].map((e) => e.getAttribute('fill').slice(5, -1)); return [all.length === new Set(all).size, urls.length > 0 && urls.every((u) => document.querySelector('#printArea #' + CSS.escape(u)))]; }")
+        await pq.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
+        await pq.click('#btnPrint'); await pq.wait_for_timeout(300)
+        ids2 = await pq.evaluate("() => { const all = [...document.querySelectorAll('[id]')].map((e) => e.id); return all.length === new Set(all).size; }")
+        await pq.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
+        check(ids == [True, True] and ids2, f'印刷の領域の図の id は重ならず、模様は印刷の領域の中を指す: {ids} {ids2}')
+        # 題は図の幅に収まる(保存する図の題を切らない)。根の名前が長いとき、警告の凡例が付くとき
+        lng = 'とても長い名前のプロジェクトで題が図の幅を超えるかを確かめるための計画の名前です'
+        tx = f'start: 2026-04-20\nmembers:\n- A\nFBS: {lng}\n- 機能\nPBS: {lng}\n- 部品\nWBS: {lng}\n- t days: 1 by: A\n'
+        await pq.evaluate("(t) => { const e = document.querySelector('#src'); e.value = t; e.dispatchEvent(new Event('input')); }", tx); await pq.wait_for_timeout(400)
+        fit = {}
+        for v in ['fbs', 'pbs', 'wbs', 'roles', 'mop', 'summary']:
+            await pq.select_option('#viewKind', v); await pq.wait_for_timeout(250)
+            fit[v] = await pq.evaluate("() => { const svg = document.querySelector('#canvas svg'), sr = svg.getBoundingClientRect(); const ts = [...document.querySelectorAll('#canvas .tbtns')].map((b) => b.getBoundingClientRect().left); return ts.length > 0 && [...svg.querySelectorAll('text')].every((t) => t.getBoundingClientRect().right <= sr.right + 0.5); }")
+        check(all(fit.values()), f'題が図の幅に収まる: {fit}')
+        await pq.close(); await cx.close()
+        check(not errs, f'ページのエラー: {errs}')
         await b.close()
 asyncio.run(main())
 print('不合格', len(fails))

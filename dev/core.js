@@ -1,5 +1,5 @@
 /*CORE-BEGIN*/
-// ---- 計算部(DOM を使わない。Node でも動く)。プロジェクト計画 版 0.30
+// ---- 計算部(DOM を使わない。Node でも動く)。プロジェクト計画 版 0.31
 const Plan = (() => {
 'use strict';
 
@@ -648,14 +648,14 @@ function renderTree(r, key, opt = {}) {
   place(root, M, M + titleH);
   const rb = B.get(root);
   const legend = warned.size ? '   点線の黄色い枠は検査の警告がある要素' : '';
-  return wrapSvg(rb.tw + 2 * M, rb.th + 2 * M + titleH, T_(M, M + 12, `${key}${legend}`, { fs: 13, weight: '600' }) + out.join(''));
+  return wrapSvg(Math.max(rb.tw, textW(`${key}${legend}`, 13)) + 2 * M, rb.th + 2 * M + titleH, T_(M, M + 12, `${key}${legend}`, { fs: 13, weight: '600' }) + out.join(''));
 }
 
 // ---- FBS と PBS の対応(仕様書 7.2 節)。左に FBS、右に PBS を並べ、実現の対応を線で結ぶ
 function renderMatch(r) {
   const F = r.bySec.FBS, P = r.bySec.PBS;
   const warned = new Set(r.checks.filter((c) => c.code === 'C1' || c.code === 'C2').map((c) => c.node));
-  const FS = 13, RH = 30, IND = 16, BW = 200, GAP = 180, M = 20, TOP = 50;
+  const FS = 13, RH = 30, IND = 16, BW = 200, GAP = 180, M = 20, TOP = 74;
   const colX = [M, M + 6 * IND + BW + GAP];
   const pos = new Map();
   const out = [];
@@ -675,8 +675,9 @@ function renderMatch(r) {
   }
   const h = TOP + Math.max(F.length, P.length) * RH + M;
   const w = colX[1] + 6 * IND + BW + M;
-  const head = T_(colX[0], 34, 'FBS', { fs: 14, weight: '600' }) + T_(colX[1], 34, 'PBS', { fs: 14, weight: '600' })
-    + (warned.size ? T_(colX[0] + 60, 34, '点線の黄色い枠は対応がない要素(検査 C1・C2)', { fs: 11, fill: COL.sub }) : '');
+  const head = T_(M, 24, 'FBS と PBS の対応', { fs: 13, weight: '600' })
+    + T_(colX[0], 58, 'FBS', { fs: 14, weight: '600' }) + T_(colX[1], 58, 'PBS', { fs: 14, weight: '600' })
+    + (warned.size ? T_(colX[0] + 60, 58, '点線の黄色い枠は対応がない要素(検査 C1・C2)', { fs: 11, fill: COL.sub }) : '');
   return wrapSvg(w, h, head + lines.join('') + out.join(''));
 }
 
@@ -828,6 +829,9 @@ function renderAOA(r, opt = {}) {
   const tw = cols.reduce((a, c) => a + c[1], 0);
   let ty = opt.part === 'table' ? TOP - 30 : TOP + H + 30;
   const tbl = [];
+  // 画面の図(分けない図)では、表の上に題を置く(題の右に表の保存のボタンを置くため。仕様書 7.3 節)
+  if (!opt.part) { tbl.push(T_(M, ty + 13, 'タスクの表', { fs: 13, weight: '600' })); opt.collect?.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: 'タスクの表', y: ty + 13, fs: 13 }); ty += 23; }
+  const tbl0 = tbl.length, ty0 = ty;
   let x = M;
   tbl.push(`<rect x="${M}" y="${ty}" width="${tw}" height="${RH}" fill="${COL.head}" stroke="${COL.grid}"/>`);
   for (const [h, w] of cols) { tbl.push(T_(x + 5, ty + 14, h, { fs: FS, weight: '600' })); x += w; }
@@ -842,6 +846,7 @@ function renderAOA(r, opt = {}) {
     ty += RH;
   }
   const head = summaryText(r);
+  opt.collect?.tables.push({ name: 'タスクの表', header: cols.map((c) => c[0]), rows: sorted.map((t) => [t.num, t.name, fmtDays(t.days), fmtDays(t.ES), fmtDays(t.LS), fmtDays(t.TF)]), frag: tbl.slice(tbl0).join(''), box: [M, ty0, tw, ty - ty0] });
   if (opt.part === 'table') return wrapSvg(Math.max(M + tw + M, textW(head[0], 13) + 2 * M), ty + M, T_(M, 26, head[0], { fs: 13, weight: '600' }) + tbl.join(''));
   const svgW = Math.max(W, M + tw + M, textW(head[0], 13) + 2 * M);
   return wrapSvg(svgW, ty + M, T_(M, 26, head[0], { fs: 13, weight: '600' }) + T_(M, 46, head[1], { fs: 11, fill: COL.sub }) + out.join('') + tbl.join(''));
@@ -950,7 +955,7 @@ function renderMop(r, opt = {}) {
     });
   }
   const title = T_(M, 24, `テスト項目(MOP): ${root.name}`, { fs: 13, weight: '600' });
-  if (!rows.length) return wrapSvg(420, 80, title + T_(M, 50, 'FBS に要素がありません', { fs: 12 }));
+  if (!rows.length) return wrapSvg(Math.max(420, textW(`テスト項目(MOP): ${root.name}`, 13) + 2 * M), 80, title + T_(M, 50, 'FBS に要素がありません', { fs: 12 }));
   const LV = Math.max(0, ...F.filter((n) => n.parent && n.children.length).map((n) => n.depth));
   const label = (n) => (n.children.length || !n.parent ? `「${n.name}」全体` : n.name);
   const colW = [];
@@ -1009,8 +1014,15 @@ function renderMop(r, opt = {}) {
       out.push(`<g data-mop="${n.id}|${i}" data-checked="${ck ? 1 : 0}"><title>${ck ? 'チェック済み(mop*:)。クリックで外す' : '未チェック(mop:)。クリックでチェック済みにする'}</title><rect x="${chkX + 1}" y="${yy + 1}" width="${chkW - 2}" height="${hh - 2}" fill="transparent"/><rect x="${cx - 7}" y="${cy - 7}" width="14" height="14" rx="2" fill="#fff" stroke="${COL.line}" stroke-width="1.3"/>${ck ? `<path d="M${cx - 4.5} ${cy}l3 3.2l6-6.6" fill="none" stroke="${COL.line}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}</g>`);
     }
   }
+  if (opt.collect) {
+    const anc = (n) => { const a = []; for (let x = n.children.length || !n.parent ? n : n.parent; x && x.parent; x = x.parent) a.unshift(x); return a; };
+    opt.collect.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: `テスト項目(MOP): ${root.name}`, y: 24, fs: 13 });
+    opt.collect.tables.push({ name: 'テスト項目(MOP)', header: heads.map((h) => h[0]),
+      rows: rows.map((x) => { const a = anc(x.n); return [...Array.from({ length: LV }, (_, k) => (a[k] ? a[k].name : '')), label(x.n), x.i >= 0 && x.n.mopChecked[x.i] ? '✓' : '', x.i < 0 ? '(MOP なし)' : x.n.mops[x.i], ...(hasP ? [pbsName(x.n)] : [])]; }),
+      frag: out.join(''), box: [x0, HY, endX - x0, ry[ry.length - 1] - HY] });
+  }
   const sub = `チェック済み ${done0} / ${total0} 件。済の欄をクリックすると、mop:(未チェック)と mop*:(チェック済み)が切り替わる${warned.size ? '。点線の黄色い枠は MOP がない要素(検査 C3)' : ''}`;
-  const W = Math.max(endX + M, textW(sub, 11) + 2 * M);
+  const W = Math.max(endX + M, textW(sub, 11) + 2 * M, textW(`テスト項目(MOP): ${root.name}`, 13) + 2 * M);
   return wrapSvg(W, ry[ry.length - 1] + M, title + T_(M, 42, sub, { fs: 11, fill: COL.sub }) + out.join(''));
 }
 
@@ -1028,25 +1040,39 @@ function renderRoles(r, opt = {}) {
   const nRows = opt.rows ? opt.rows[1] - opt.rows[0] : r.tasks.length;
   const body = table ? drawWbsLeft(r, L, M, TOP + L.RH, (t) => [[byW, who(r, t.by) || '(なし)'], [rvW, who(r, t.review)], [50, fmtDays(t.days)]], { rows: opt.rows }) : '';
   const tableW = hc.x - M;
+  if (opt.collect && table) {
+    const anc = (t) => { const a = []; for (let x = t.parent; x && x.parent; x = x.parent) a.unshift(x); return a; };
+    opt.collect.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: `役割分担: ${r.sec.WBS.root.name}`, y: 28, fs: 13 });
+    opt.collect.tables.push({ name: '役割分担', header: [...Array.from({ length: L.levels }, (_, k) => `第 ${k + 1} 層`), 'タスク', '作成', '確認', '日数'],
+      rows: r.tasks.map((t) => { const a = anc(t); return [...Array.from({ length: L.levels }, (_, k) => (a[k] ? `${a[k].num} ${a[k].name}` : '')), `${t.num} ${t.name}`, who(r, t.by) || '(なし)', who(r, t.review), fmtDays(t.days)]; }),
+      frag: hc.svg + body, box: [M, TOP, tableW, L.RH * (nRows + 1)] });
+  }
   // 担当者ごとのまとめ
   let y = table ? TOP + L.RH * (nRows + 1) + 30 : TOP + 22;
   const sum = [];
-  if (opt.sum === false) return wrapSvg(Math.max(tableW, 450) + 2 * M, y - 30 + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + hc.svg + body);
+  const titleW = textW(`役割分担: ${r.sec.WBS.root.name}`, 13); // 題が図の幅に収まるように
+  if (opt.sum === false) return wrapSvg(Math.max(tableW, 450, titleW) + 2 * M, y - 30 + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + hc.svg + body);
   sum.push(T_(M, y - 8, '担当者ごとのまとめ', { fs: 13, weight: '600' }));
   const cols = [['担当者', 120], ['作成するタスク', 100], ['作成の日数の合計', 130], ['確認するタスク', 100]];
+  const sum0 = sum.length, sy0 = y, sumRows = [];
   let x = M;
   for (const [h, w] of cols) { sum.push(`<rect x="${x}" y="${y}" width="${w}" height="${L.RH}" fill="${COL.head}" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, h, { fs: L.FS, weight: '600' })); x += w; }
   y += L.RH;
   for (const m of r.members) {
     const mk = r.tasks.filter((t) => t.by.includes(m)), rv = r.tasks.filter((t) => t.review.includes(m));
     const vals = [m.name, `${mk.length} 件`, `${fmtDays(mk.reduce((a, t) => a + t.days, 0))} 日`, `${rv.length} 件`];
+    sumRows.push(vals);
     x = M;
     let row = '';
     vals.forEach((v, i) => { row += `<rect x="${x}" y="${y}" width="${cols[i][1]}" height="${L.RH}" fill="#fff" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, clip(v, cols[i][1] - 10, L.FS), { fs: L.FS }); x += cols[i][1]; });
     sum.push(`<g data-id="m${r.members.indexOf(m)}" data-start="${m.start}" data-end="${m.end}">${row}</g>`);
     y += L.RH;
   }
-  const W = Math.max(tableW, 450) + 2 * M;
+  if (opt.collect) {
+    opt.collect.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: '担当者ごとのまとめ', y: sy0 - 8, fs: 13 });
+    opt.collect.tables.push({ name: '担当者ごとのまとめ', header: cols.map((c) => c[0]), rows: sumRows, frag: sum.slice(sum0).join(''), box: [M, sy0, cols.reduce((a, c) => a + c[1], 0), y - sy0] });
+  }
+  const W = Math.max(tableW, 450, titleW) + 2 * M;
   return wrapSvg(W, y + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + (table ? hc.svg + body : '') + sum.join(''));
 }
 
@@ -1270,12 +1296,14 @@ function renderSummary(r, opts = {}) {
   const today = opts.today ? parseDate(opts.today) : null;
   const s0 = r.sched.start, out = [];
   let y = 24;
-  const h2 = (t) => { y += 40; out.push(T_(M, y, t, { fs: 14, weight: '600' })); out.push(`<path d="M${M} ${y + 6}H${M + W0}" stroke="${COL.grid}"/>`); y += 8; };
+  let lastH2 = null;
+  const h2 = (t) => { y += 40; lastH2 = { label: t, y }; out.push(T_(M, y, t, { fs: 14, weight: '600' })); out.push(`<path d="M${M} ${y + 6}H${M + W0}" stroke="${COL.grid}"/>`); y += 8; };
   const line = (t, o = {}) => { y += 18; out.push(T_(M + (o.ind ?? 0), y, t, { fs: o.fs ?? FS, fill: o.fill })); };
   const pct = (a, b) => (b > 0 ? `${Math.round(a / b * 100)}%` : '―');
   // 表: cols は [見出し, 幅, 右寄せ]。rows は { cells, id(選べるとき), start, end }
   const table = (cols, rows) => {
     let x = M;
+    const o0 = out.length, y0 = y;
     for (const [h, w] of cols) { out.push(`<rect x="${x}" y="${y}" width="${w}" height="${RH}" fill="${COL.head}" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, h, { fs: FS, weight: '600' })); x += w; }
     y += RH;
     for (const row of rows) {
@@ -1289,6 +1317,11 @@ function renderSummary(r, opts = {}) {
       });
       out.push(row.id ? `<g data-id="${row.id}" data-start="${row.start}" data-end="${row.end}">${row.title ? `<title>${esc(row.title)}</title>` : ''}${g}</g>` : g);
       y += RH;
+    }
+    if (opts.collect && lastH2) {
+      opts.collect.anchors.push({ kind: 'table', index: opts.collect.tables.length, label: lastH2.label, y: lastH2.y, fs: 14 });
+      opts.collect.tables.push({ name: lastH2.label, header: cols.map((c) => c[0]), rows: rows.map((row) => row.cells.map((c) => String(typeof c === 'object' ? c.t : c))), frag: out.slice(o0).join(''), box: [M, y0, cols.reduce((a, c) => a + c[1], 0), y - y0] });
+      lastH2 = null;
     }
   };
   // 横棒(部分の並び。[長さ, 塗りの属性])
@@ -1384,7 +1417,7 @@ function renderSummary(r, opts = {}) {
     table([['項目', 220], ['件数', 80, true]], known.map(([l, n]) => ({ cells: [l, `${n} 件`] })).concat([{ cells: [{ t: '計', weight: '600' }, { t: `${ws.length} 件`, weight: '600' }] }]));
     line('警告の中身は、左下の診断の欄で見られます。', { fill: COL.sub, fs: 11 });
   }
-  return wrapSvg(W0 + 2 * M, y + M, out.join(''));
+  return wrapSvg(Math.max(W0, textW(`サマリー: ${r.sec.WBS.root.name}`, 15)) + 2 * M, y + M, out.join('')); // 題が図の幅に収まるように
 }
 
 const VIEWS = [
@@ -1408,11 +1441,11 @@ function render(r, view, opts = {}) {
     case 'fbs': return { svg: renderTree(r, 'FBS') };
     case 'pbs': return { svg: renderTree(r, 'PBS') };
     case 'match': return { svg: renderMatch(r) };
-    case 'mop': return { svg: renderMop(r) };
+    case 'mop': return { svg: renderMop(r, { collect: opts.collect }) };
     case 'summary': return { svg: renderSummary(r, opts) };
     case 'wbs': return { svg: renderTree(r, 'WBS') };
-    case 'aoa': return { svg: renderAOA(r) };
-    case 'roles': return { svg: renderRoles(r) };
+    case 'aoa': return { svg: renderAOA(r, { collect: opts.collect }) };
+    case 'roles': return { svg: renderRoles(r, { collect: opts.collect }) };
     case 'gantt': case 'people': {
       // 期間が長すぎると図が大きくなりすぎて固まるので、描かずに知らせる(仕様書 7.5 節)
       const { nDays } = figDays(r);
@@ -1570,7 +1603,7 @@ function embedSource(svg, text) {
 }
 function extractSource(svgText) {
   const m = new RegExp(`<metadata id="${META_ID}">([A-Za-z0-9+/=\\s]*)</metadata>`).exec(svgText);
-  if (!m) return { ok: false, error: 'この SVG にはテキストが埋め込まれていません(プロジェクト計画で保存した .svg だけを開けます)' };
+  if (!m) return { ok: false, error: 'この SVG にはテキストが埋め込まれていません(版 0.30 までに「画像…」で保存した .svg だけを開けます。図・表のボタンで保存した SVG にはテキストを入れていません)' };
   try { return { ok: true, text: new TextDecoder('utf-8', { fatal: true }).decode(b64dec(m[1])) }; }
   catch { return { ok: false, error: '埋め込まれたテキストが壊れています' }; }
 }
@@ -1947,6 +1980,49 @@ const Edit = (() => {
   return { setAttr, setMopChecked, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
 })();
 
+// ---- 図・表を 1 つずつ保存する・コピーする(仕様書 9 章)
+// 保存する SVG からは、画面の操作のための印(data-*)と、要素の説明(title。メモを含む)を除く(報告書に貼るため)
+const cleanSvg = (svg) => svg.replace(/<title>[\s\S]*?<\/title>/g, '').replace(/ data-[a-z-]+="[^"]*"/g, '');
+const unesc = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+// 図の題: 図の最初の文字(どのビューも、左上の題を最初に描く)
+function firstText(svg) {
+  const m = /<text[^>]*? y="([\d.]+)"[^>]*? font-size="([\d.]+)"[^>]*>([^<]*)<\/text>/.exec(svg);
+  return m ? { y: +m[1], fs: +m[2], label: unesc(m[3]) } : null;
+}
+const FIG_ID = { fbs: 'fbs', pbs: 'pbs', match: 'match', wbs: 'wbs', aoa: 'aoa', gantt: 'gantt', people: 'gantt-people', summary: 'summary' };
+// ビューの図と表。figs: [{ id, svg }]、tables: [{ name(ファイル名に使う題), header, rows, svg(題を入れない) }]、
+// anchors: 題の位置({ kind: 'fig', id | kind: 'table', index, label(題の文字), y(題の文字の基準線), fs })。画面で題の右にボタンを置くのに使う
+function pieces(r, view, opts = {}) {
+  const col = { anchors: [], tables: [] };
+  const o = render(r, view, { ...opts, collect: col });
+  if (!o.svg || !r.tasks.length && ['aoa', 'roles', 'gantt', 'people'].includes(view)) return { figs: [], tables: [], anchors: [] };
+  const figs = [];
+  const id = FIG_ID[view];
+  if (id) figs.push({ id, svg: cleanSvg(view === 'aoa' ? renderAOA(r, { part: 'diagram' }) : o.svg) });
+  const PAD = 20;
+  const tables = col.tables.map((t) => {
+    const [x0, y0, w, h] = t.box;
+    return { name: t.name, header: t.header, rows: t.rows, svg: cleanSvg(wrapSvg(w + 2 * PAD, h + 2 * PAD, `<g transform="translate(${PAD - x0},${PAD - y0})">${t.frag}</g>`)) };
+  });
+  return { figs, tables, anchors: anchorsOf(r, view, o.svg, col) };
+}
+// 題の位置(画面で題の右にボタンを置くため)。svg は render で描いた図、col は render に opts.collect で渡して集めたもの(描き直さずに求める)。
+// 図は { kind: 'fig', id, label, y, fs }、表は { kind: 'table', name(表の題。ファイル名に使う), label(画面の題の文字), y, fs }
+function anchorsOf(r, view, svg, col) {
+  const out = [];
+  if (!svg || !r.tasks.length && ['aoa', 'roles', 'gantt', 'people'].includes(view)) return out;
+  const id = FIG_ID[view];
+  const t = id && svg ? firstText(svg) : null; // アローダイアグラムの矢印の図の題は、ビューの図の最初の文字と同じ
+  if (t) out.push({ kind: 'fig', id, ...t });
+  for (const a of col.anchors) if (col.tables[a.index]) out.push({ kind: 'table', name: col.tables[a.index].name, label: a.label, y: a.y, fs: a.fs });
+  return out;
+}
+// 表をタブ区切りの文字にする。1 行目は見出し。セルの中のタブ・改行は空白 1 個にする。行の区切りは LF
+function tsv(t) {
+  const c = (v) => String(v).replace(/[\t\r\n]+/g, ' ');
+  return `${[t.header, ...t.rows].map((row) => row.map(c).join('\t')).join('\n')}\n`;
+}
+
 // ---- version:(最後にファイルとして保存した日。1 行目にだけ書ける。仕様書 3.3 節・4.1 節・9 章)
 const normText = (t) => t.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 // 保存するときに、内容が変わったかを比べるためのテキスト。1 行目の version: の日付の部分(注または行末までの値。前後の空白を除く)だけを除く
@@ -1969,7 +2045,7 @@ function setVersion(text0, date) {
   return text.slice(0, v.vStart) + sp + date + text.slice(v.vEnd);
 }
 
-return { parse, analyze, stripVersion, setVersion, misplacedVersion, render, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
+return { parse, analyze, stripVersion, setVersion, misplacedVersion, render, pieces, anchorsOf, tsv, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
 })();
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/

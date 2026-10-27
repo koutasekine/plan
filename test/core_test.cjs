@@ -970,6 +970,40 @@ const W_ = 'WBS: W\n- t by: A days: 1\n';
   ok(sv(`version: abc\n${t}`) === sv(`version: 2026-01-01\n${t}`), '読めない日付も日付の部分として除く');
   ok(sv(`version: 2026-01-01\n${t}`) !== sv(`version: 2026-01-01\n${t.replace('days: 1', 'days:  1')}`), '空白 1 つの違いも違いとみなす(1 行目に version: があるとき)');
 }
+// ---- 図・表を 1 つずつ保存する・コピーする(仕様書 9 章)
+{
+  const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');
+  const r = P.analyze(t);
+  const want = { fbs: [['fbs'], []], pbs: [['pbs'], []], match: [['match'], []], wbs: [['wbs'], []], aoa: [['aoa'], ['タスクの表']], roles: [[], ['役割分担', '担当者ごとのまとめ']],
+    gantt: [['gantt'], []], people: [['gantt-people'], []], mop: [[], ['テスト項目(MOP)']], summary: [['summary'], ['タスクの進み具合', '遅れと問題発生', '担当者ごとの状況']] };
+  for (const [v, [figs, tables]] of Object.entries(want)) {
+    const o = { today: '2026-05-01' };
+    const p = P.pieces(r, v, o);
+    ok(p.figs.map((f) => f.id).join() === figs.join() && p.tables.map((x) => x.name).join() === tables.join(), `pieces の図と表(${v}): ${p.figs.map((f) => f.id)} / ${p.tables.map((x) => x.name)}`);
+    // 題の位置は、描き直さずに求めたものと同じ。表は題で指す
+    const col = { anchors: [], tables: [] };
+    const svg = P.render(r, v, { ...o, collect: col }).svg;
+    ok(svg === P.render(r, v, o).svg, `collect を渡しても描く図は同じ(${v})`);
+    ok(JSON.stringify(P.anchorsOf(r, v, svg, col)) === JSON.stringify(p.anchors) && p.anchors.filter((a) => a.kind === 'table').map((a) => a.name).join() === tables.join() && p.anchors.filter((a) => a.kind === 'fig').map((a) => a.id).join() === figs.join(), `題の位置(${v})`);
+    ok(p.anchors.every((a) => svg.includes(`>${a.label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</text>`)), `題の文字は図の中にある(${v})`);
+    for (const x of [...p.figs, ...p.tables]) ok(!/ data-[a-z-]+=|<title>/.test(x.svg) && /^<svg [^>]*width="\d+" height="\d+"/.test(x.svg), `保存する SVG に操作の印と説明がない(${v})`);
+  }
+  // 表には題を入れない。図には入れる
+  const ro = P.pieces(r, 'roles');
+  ok(!ro.tables[0].svg.includes('役割分担: ') && !ro.tables[0].svg.includes('担当者ごとのまとめ') && ro.tables[0].svg.includes('1.1.1 カレンダデザイン') && !ro.tables[1].svg.includes('担当者ごとのまとめ'), '表の SVG に題を入れない');
+  ok(P.pieces(r, 'gantt').figs[0].svg.includes('クリティカルパス') && !P.pieces(r, 'aoa').tables[0].svg.includes('タスクの表') && !P.pieces(r, 'aoa').figs[0].svg.includes('管理番号'), '図の SVG には題を入れ、アローダイアグラムの図に表は入れない');
+  // コピー: 1 行目は見出し、まとめたセルは各行に書く、LF、セルの中のタブ・改行は空白 1 個
+  const lines = P.tsv(ro.tables[0]).split('\n');
+  ok(lines[0] === '第 1 層\t第 2 層\tタスク\t作成\t確認\t日数' && lines[2].startsWith('1 設計フェーズ\t1.2 詳細設計\t1.2.1 ') && lines[3].startsWith('1 設計フェーズ\t1.2 詳細設計\t1.2.2 ') && lines[lines.length - 1] === '' && lines.length === r.tasks.length + 2, `役割分担のコピー: ${lines.slice(0, 3)}`);
+  ok(P.tsv({ header: ['a\tb', 'c'], rows: [['x\r\ny', 'z\n']] }) === 'a b\tc\nx y\tz \n', 'セルの中のタブ・改行は空白 1 個にする');
+  const mt = P.tsv(P.pieces(r, 'mop').tables[0]).split('\n');
+  ok(mt[0] === '第 1 層\t機能\t済\tテスト項目(MOP)\t実現する PBS の要素' && mt[1].split('\t')[2] === '✓' && mt[2].split('\t')[2] === '' && mt[2].startsWith('予定管理\t日時の設定\t'), `MOP のコピー: ${mt.slice(0, 3)}`);
+  // 表がないときはボタンの対象にしない(遅れがなければ「遅れと問題発生」は表にならない)。タスクのない計画では図も表もない
+  const nl = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n- t by: A days: 1\n');
+  ok(!P.pieces(nl, 'summary', { today: '2026-04-01' }).tables.some((x) => x.name === '遅れと問題発生') && P.pieces(nl, 'summary', { today: '2026-05-01' }).tables.some((x) => x.name === '遅れと問題発生'), '遅れのないサマリーに遅れの表はない');
+  const e = P.analyze('start: 2026-04-23\nmembers:\n- A\nWBS: W\n');
+  ok(['aoa', 'roles', 'gantt', 'people'].every((v) => { const p = P.pieces(e, v); return !p.figs.length && !p.tables.length && !p.anchors.length; }), 'タスクのない計画では、図も表も題の位置もない');
+}
 // ---- SVG の埋め込みと取り出し
 {
   const t = fs.readFileSync(`${__dirname}/sample.plan`, 'utf8');

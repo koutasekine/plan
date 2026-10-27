@@ -64,6 +64,9 @@ textarea#src::selection{background:rgba(139,26,43,.25);color:transparent}
 #msg .bar{display:flex;gap:8px;align-items:center;justify-content:space-between}
 #msg button{font-size:12px;padding:2px 8px}
 #view{flex:1;overflow:auto;background:#fff;position:relative}
+#canvas{position:relative}
+#canvas .tbtns{position:absolute;display:flex;gap:4px;z-index:2;white-space:nowrap;width:max-content}
+#canvas .tbtns button{font-size:11px;line-height:1.2;padding:1px 7px;border-radius:3px;white-space:nowrap;flex:none}
 #view svg{display:block}
 #view.stale svg{opacity:.45}
 #view [data-id]{cursor:pointer}
@@ -118,6 +121,9 @@ footer a{color:#777}
   #printArea .page{break-after:page;page-break-after:always;display:flex;align-items:flex-start;justify-content:center;box-sizing:border-box;height:calc(100vh - 1px);padding:10mm;overflow:hidden}
   #printArea .page:last-child{break-after:auto;page-break-after:auto}
   #printArea svg{max-width:100%;max-height:100%;width:auto;height:auto}
+  /* 図・表を 1 つだけ印刷するとき(題の右の「PDF」): 紙はその図と同じ大きさ、余白 0(紙の指定は画面から入れる) */
+  #printArea.one .page{padding:0;display:block;break-after:auto;page-break-after:auto}
+  #printArea.one svg{display:block;max-width:none;max-height:none}
 }
 </style>
 </head>
@@ -125,14 +131,9 @@ footer a{color:#777}
 <header>
   <h1>プロジェクト計画</h1>
   <button id="btnNew">新規</button>
-  <button id="btnOpen" title="テキスト(.plan・.txt)か、プロジェクト計画で保存した SVG を開く">開く</button><input type="file" id="fileOpen" accept=".plan,.txt,.svg" style="display:none">
+  <button id="btnOpen" title="テキスト(.plan・.txt)か、版 0.30 までに「画像…」で保存した SVG を開く">開く</button><input type="file" id="fileOpen" accept=".plan,.txt,.svg" style="display:none">
   <button id="btnSave" title="開いているファイルに上書き保存(Ctrl+S。まだファイルがないときは保存先を選ぶ)">上書き保存</button>
   <button id="btnSaveAs" title="保存先とファイル名を選んでテキスト(.plan)を保存">別名で保存</button>
-  <select id="exportImg" title="表示中のビューを画像で保存(SVG はテキストを埋め込むので、このアプリで開き直せる)">
-    <option value="">画像…</option>
-    <option value="svg" title="テキストを埋め込むので、このアプリで開き直せる">SVG</option>
-    <option value="png">PNG</option>
-  </select>
   <button id="btnPrint" title="描けるビューをすべて、1 ページに 1 つずつ印刷する(印刷の画面で「PDF に保存」を選ぶと PDF になる)">印刷 / PDF</button>
   <span id="fileName" class="fname"></span>
   <span id="stat" class="stat" role="status"></span>
@@ -159,7 +160,7 @@ footer a{color:#777}
 <div id="printArea"></div>
 <script>
 /*CORE-BEGIN*/
-// ---- 計算部(DOM を使わない。Node でも動く)。プロジェクト計画 版 0.30
+// ---- 計算部(DOM を使わない。Node でも動く)。プロジェクト計画 版 0.31
 const Plan = (() => {
 'use strict';
 
@@ -808,14 +809,14 @@ function renderTree(r, key, opt = {}) {
   place(root, M, M + titleH);
   const rb = B.get(root);
   const legend = warned.size ? '   点線の黄色い枠は検査の警告がある要素' : '';
-  return wrapSvg(rb.tw + 2 * M, rb.th + 2 * M + titleH, T_(M, M + 12, `${key}${legend}`, { fs: 13, weight: '600' }) + out.join(''));
+  return wrapSvg(Math.max(rb.tw, textW(`${key}${legend}`, 13)) + 2 * M, rb.th + 2 * M + titleH, T_(M, M + 12, `${key}${legend}`, { fs: 13, weight: '600' }) + out.join(''));
 }
 
 // ---- FBS と PBS の対応(仕様書 7.2 節)。左に FBS、右に PBS を並べ、実現の対応を線で結ぶ
 function renderMatch(r) {
   const F = r.bySec.FBS, P = r.bySec.PBS;
   const warned = new Set(r.checks.filter((c) => c.code === 'C1' || c.code === 'C2').map((c) => c.node));
-  const FS = 13, RH = 30, IND = 16, BW = 200, GAP = 180, M = 20, TOP = 50;
+  const FS = 13, RH = 30, IND = 16, BW = 200, GAP = 180, M = 20, TOP = 74;
   const colX = [M, M + 6 * IND + BW + GAP];
   const pos = new Map();
   const out = [];
@@ -835,8 +836,9 @@ function renderMatch(r) {
   }
   const h = TOP + Math.max(F.length, P.length) * RH + M;
   const w = colX[1] + 6 * IND + BW + M;
-  const head = T_(colX[0], 34, 'FBS', { fs: 14, weight: '600' }) + T_(colX[1], 34, 'PBS', { fs: 14, weight: '600' })
-    + (warned.size ? T_(colX[0] + 60, 34, '点線の黄色い枠は対応がない要素(検査 C1・C2)', { fs: 11, fill: COL.sub }) : '');
+  const head = T_(M, 24, 'FBS と PBS の対応', { fs: 13, weight: '600' })
+    + T_(colX[0], 58, 'FBS', { fs: 14, weight: '600' }) + T_(colX[1], 58, 'PBS', { fs: 14, weight: '600' })
+    + (warned.size ? T_(colX[0] + 60, 58, '点線の黄色い枠は対応がない要素(検査 C1・C2)', { fs: 11, fill: COL.sub }) : '');
   return wrapSvg(w, h, head + lines.join('') + out.join(''));
 }
 
@@ -988,6 +990,9 @@ function renderAOA(r, opt = {}) {
   const tw = cols.reduce((a, c) => a + c[1], 0);
   let ty = opt.part === 'table' ? TOP - 30 : TOP + H + 30;
   const tbl = [];
+  // 画面の図(分けない図)では、表の上に題を置く(題の右に表の保存のボタンを置くため。仕様書 7.3 節)
+  if (!opt.part) { tbl.push(T_(M, ty + 13, 'タスクの表', { fs: 13, weight: '600' })); opt.collect?.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: 'タスクの表', y: ty + 13, fs: 13 }); ty += 23; }
+  const tbl0 = tbl.length, ty0 = ty;
   let x = M;
   tbl.push(`<rect x="${M}" y="${ty}" width="${tw}" height="${RH}" fill="${COL.head}" stroke="${COL.grid}"/>`);
   for (const [h, w] of cols) { tbl.push(T_(x + 5, ty + 14, h, { fs: FS, weight: '600' })); x += w; }
@@ -1002,6 +1007,7 @@ function renderAOA(r, opt = {}) {
     ty += RH;
   }
   const head = summaryText(r);
+  opt.collect?.tables.push({ name: 'タスクの表', header: cols.map((c) => c[0]), rows: sorted.map((t) => [t.num, t.name, fmtDays(t.days), fmtDays(t.ES), fmtDays(t.LS), fmtDays(t.TF)]), frag: tbl.slice(tbl0).join(''), box: [M, ty0, tw, ty - ty0] });
   if (opt.part === 'table') return wrapSvg(Math.max(M + tw + M, textW(head[0], 13) + 2 * M), ty + M, T_(M, 26, head[0], { fs: 13, weight: '600' }) + tbl.join(''));
   const svgW = Math.max(W, M + tw + M, textW(head[0], 13) + 2 * M);
   return wrapSvg(svgW, ty + M, T_(M, 26, head[0], { fs: 13, weight: '600' }) + T_(M, 46, head[1], { fs: 11, fill: COL.sub }) + out.join('') + tbl.join(''));
@@ -1110,7 +1116,7 @@ function renderMop(r, opt = {}) {
     });
   }
   const title = T_(M, 24, `テスト項目(MOP): ${root.name}`, { fs: 13, weight: '600' });
-  if (!rows.length) return wrapSvg(420, 80, title + T_(M, 50, 'FBS に要素がありません', { fs: 12 }));
+  if (!rows.length) return wrapSvg(Math.max(420, textW(`テスト項目(MOP): ${root.name}`, 13) + 2 * M), 80, title + T_(M, 50, 'FBS に要素がありません', { fs: 12 }));
   const LV = Math.max(0, ...F.filter((n) => n.parent && n.children.length).map((n) => n.depth));
   const label = (n) => (n.children.length || !n.parent ? `「${n.name}」全体` : n.name);
   const colW = [];
@@ -1169,8 +1175,15 @@ function renderMop(r, opt = {}) {
       out.push(`<g data-mop="${n.id}|${i}" data-checked="${ck ? 1 : 0}"><title>${ck ? 'チェック済み(mop*:)。クリックで外す' : '未チェック(mop:)。クリックでチェック済みにする'}</title><rect x="${chkX + 1}" y="${yy + 1}" width="${chkW - 2}" height="${hh - 2}" fill="transparent"/><rect x="${cx - 7}" y="${cy - 7}" width="14" height="14" rx="2" fill="#fff" stroke="${COL.line}" stroke-width="1.3"/>${ck ? `<path d="M${cx - 4.5} ${cy}l3 3.2l6-6.6" fill="none" stroke="${COL.line}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}</g>`);
     }
   }
+  if (opt.collect) {
+    const anc = (n) => { const a = []; for (let x = n.children.length || !n.parent ? n : n.parent; x && x.parent; x = x.parent) a.unshift(x); return a; };
+    opt.collect.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: `テスト項目(MOP): ${root.name}`, y: 24, fs: 13 });
+    opt.collect.tables.push({ name: 'テスト項目(MOP)', header: heads.map((h) => h[0]),
+      rows: rows.map((x) => { const a = anc(x.n); return [...Array.from({ length: LV }, (_, k) => (a[k] ? a[k].name : '')), label(x.n), x.i >= 0 && x.n.mopChecked[x.i] ? '✓' : '', x.i < 0 ? '(MOP なし)' : x.n.mops[x.i], ...(hasP ? [pbsName(x.n)] : [])]; }),
+      frag: out.join(''), box: [x0, HY, endX - x0, ry[ry.length - 1] - HY] });
+  }
   const sub = `チェック済み ${done0} / ${total0} 件。済の欄をクリックすると、mop:(未チェック)と mop*:(チェック済み)が切り替わる${warned.size ? '。点線の黄色い枠は MOP がない要素(検査 C3)' : ''}`;
-  const W = Math.max(endX + M, textW(sub, 11) + 2 * M);
+  const W = Math.max(endX + M, textW(sub, 11) + 2 * M, textW(`テスト項目(MOP): ${root.name}`, 13) + 2 * M);
   return wrapSvg(W, ry[ry.length - 1] + M, title + T_(M, 42, sub, { fs: 11, fill: COL.sub }) + out.join(''));
 }
 
@@ -1188,25 +1201,39 @@ function renderRoles(r, opt = {}) {
   const nRows = opt.rows ? opt.rows[1] - opt.rows[0] : r.tasks.length;
   const body = table ? drawWbsLeft(r, L, M, TOP + L.RH, (t) => [[byW, who(r, t.by) || '(なし)'], [rvW, who(r, t.review)], [50, fmtDays(t.days)]], { rows: opt.rows }) : '';
   const tableW = hc.x - M;
+  if (opt.collect && table) {
+    const anc = (t) => { const a = []; for (let x = t.parent; x && x.parent; x = x.parent) a.unshift(x); return a; };
+    opt.collect.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: `役割分担: ${r.sec.WBS.root.name}`, y: 28, fs: 13 });
+    opt.collect.tables.push({ name: '役割分担', header: [...Array.from({ length: L.levels }, (_, k) => `第 ${k + 1} 層`), 'タスク', '作成', '確認', '日数'],
+      rows: r.tasks.map((t) => { const a = anc(t); return [...Array.from({ length: L.levels }, (_, k) => (a[k] ? `${a[k].num} ${a[k].name}` : '')), `${t.num} ${t.name}`, who(r, t.by) || '(なし)', who(r, t.review), fmtDays(t.days)]; }),
+      frag: hc.svg + body, box: [M, TOP, tableW, L.RH * (nRows + 1)] });
+  }
   // 担当者ごとのまとめ
   let y = table ? TOP + L.RH * (nRows + 1) + 30 : TOP + 22;
   const sum = [];
-  if (opt.sum === false) return wrapSvg(Math.max(tableW, 450) + 2 * M, y - 30 + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + hc.svg + body);
+  const titleW = textW(`役割分担: ${r.sec.WBS.root.name}`, 13); // 題が図の幅に収まるように
+  if (opt.sum === false) return wrapSvg(Math.max(tableW, 450, titleW) + 2 * M, y - 30 + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + hc.svg + body);
   sum.push(T_(M, y - 8, '担当者ごとのまとめ', { fs: 13, weight: '600' }));
   const cols = [['担当者', 120], ['作成するタスク', 100], ['作成の日数の合計', 130], ['確認するタスク', 100]];
+  const sum0 = sum.length, sy0 = y, sumRows = [];
   let x = M;
   for (const [h, w] of cols) { sum.push(`<rect x="${x}" y="${y}" width="${w}" height="${L.RH}" fill="${COL.head}" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, h, { fs: L.FS, weight: '600' })); x += w; }
   y += L.RH;
   for (const m of r.members) {
     const mk = r.tasks.filter((t) => t.by.includes(m)), rv = r.tasks.filter((t) => t.review.includes(m));
     const vals = [m.name, `${mk.length} 件`, `${fmtDays(mk.reduce((a, t) => a + t.days, 0))} 日`, `${rv.length} 件`];
+    sumRows.push(vals);
     x = M;
     let row = '';
     vals.forEach((v, i) => { row += `<rect x="${x}" y="${y}" width="${cols[i][1]}" height="${L.RH}" fill="#fff" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, clip(v, cols[i][1] - 10, L.FS), { fs: L.FS }); x += cols[i][1]; });
     sum.push(`<g data-id="m${r.members.indexOf(m)}" data-start="${m.start}" data-end="${m.end}">${row}</g>`);
     y += L.RH;
   }
-  const W = Math.max(tableW, 450) + 2 * M;
+  if (opt.collect) {
+    opt.collect.anchors.push({ kind: 'table', index: opt.collect.tables.length, label: '担当者ごとのまとめ', y: sy0 - 8, fs: 13 });
+    opt.collect.tables.push({ name: '担当者ごとのまとめ', header: cols.map((c) => c[0]), rows: sumRows, frag: sum.slice(sum0).join(''), box: [M, sy0, cols.reduce((a, c) => a + c[1], 0), y - sy0] });
+  }
+  const W = Math.max(tableW, 450, titleW) + 2 * M;
   return wrapSvg(W, y + M, T_(M, 28, `役割分担: ${r.sec.WBS.root.name}`, { fs: 13, weight: '600' }) + (table ? hc.svg + body : '') + sum.join(''));
 }
 
@@ -1430,12 +1457,14 @@ function renderSummary(r, opts = {}) {
   const today = opts.today ? parseDate(opts.today) : null;
   const s0 = r.sched.start, out = [];
   let y = 24;
-  const h2 = (t) => { y += 40; out.push(T_(M, y, t, { fs: 14, weight: '600' })); out.push(`<path d="M${M} ${y + 6}H${M + W0}" stroke="${COL.grid}"/>`); y += 8; };
+  let lastH2 = null;
+  const h2 = (t) => { y += 40; lastH2 = { label: t, y }; out.push(T_(M, y, t, { fs: 14, weight: '600' })); out.push(`<path d="M${M} ${y + 6}H${M + W0}" stroke="${COL.grid}"/>`); y += 8; };
   const line = (t, o = {}) => { y += 18; out.push(T_(M + (o.ind ?? 0), y, t, { fs: o.fs ?? FS, fill: o.fill })); };
   const pct = (a, b) => (b > 0 ? `${Math.round(a / b * 100)}%` : '―');
   // 表: cols は [見出し, 幅, 右寄せ]。rows は { cells, id(選べるとき), start, end }
   const table = (cols, rows) => {
     let x = M;
+    const o0 = out.length, y0 = y;
     for (const [h, w] of cols) { out.push(`<rect x="${x}" y="${y}" width="${w}" height="${RH}" fill="${COL.head}" stroke="${COL.grid}"/>` + T_(x + 5, y + 15, h, { fs: FS, weight: '600' })); x += w; }
     y += RH;
     for (const row of rows) {
@@ -1449,6 +1478,11 @@ function renderSummary(r, opts = {}) {
       });
       out.push(row.id ? `<g data-id="${row.id}" data-start="${row.start}" data-end="${row.end}">${row.title ? `<title>${esc(row.title)}</title>` : ''}${g}</g>` : g);
       y += RH;
+    }
+    if (opts.collect && lastH2) {
+      opts.collect.anchors.push({ kind: 'table', index: opts.collect.tables.length, label: lastH2.label, y: lastH2.y, fs: 14 });
+      opts.collect.tables.push({ name: lastH2.label, header: cols.map((c) => c[0]), rows: rows.map((row) => row.cells.map((c) => String(typeof c === 'object' ? c.t : c))), frag: out.slice(o0).join(''), box: [M, y0, cols.reduce((a, c) => a + c[1], 0), y - y0] });
+      lastH2 = null;
     }
   };
   // 横棒(部分の並び。[長さ, 塗りの属性])
@@ -1544,7 +1578,7 @@ function renderSummary(r, opts = {}) {
     table([['項目', 220], ['件数', 80, true]], known.map(([l, n]) => ({ cells: [l, `${n} 件`] })).concat([{ cells: [{ t: '計', weight: '600' }, { t: `${ws.length} 件`, weight: '600' }] }]));
     line('警告の中身は、左下の診断の欄で見られます。', { fill: COL.sub, fs: 11 });
   }
-  return wrapSvg(W0 + 2 * M, y + M, out.join(''));
+  return wrapSvg(Math.max(W0, textW(`サマリー: ${r.sec.WBS.root.name}`, 15)) + 2 * M, y + M, out.join('')); // 題が図の幅に収まるように
 }
 
 const VIEWS = [
@@ -1568,11 +1602,11 @@ function render(r, view, opts = {}) {
     case 'fbs': return { svg: renderTree(r, 'FBS') };
     case 'pbs': return { svg: renderTree(r, 'PBS') };
     case 'match': return { svg: renderMatch(r) };
-    case 'mop': return { svg: renderMop(r) };
+    case 'mop': return { svg: renderMop(r, { collect: opts.collect }) };
     case 'summary': return { svg: renderSummary(r, opts) };
     case 'wbs': return { svg: renderTree(r, 'WBS') };
-    case 'aoa': return { svg: renderAOA(r) };
-    case 'roles': return { svg: renderRoles(r) };
+    case 'aoa': return { svg: renderAOA(r, { collect: opts.collect }) };
+    case 'roles': return { svg: renderRoles(r, { collect: opts.collect }) };
     case 'gantt': case 'people': {
       // 期間が長すぎると図が大きくなりすぎて固まるので、描かずに知らせる(仕様書 7.5 節)
       const { nDays } = figDays(r);
@@ -1730,7 +1764,7 @@ function embedSource(svg, text) {
 }
 function extractSource(svgText) {
   const m = new RegExp(`<metadata id="${META_ID}">([A-Za-z0-9+/=\\s]*)</metadata>`).exec(svgText);
-  if (!m) return { ok: false, error: 'この SVG にはテキストが埋め込まれていません(プロジェクト計画で保存した .svg だけを開けます)' };
+  if (!m) return { ok: false, error: 'この SVG にはテキストが埋め込まれていません(版 0.30 までに「画像…」で保存した .svg だけを開けます。図・表のボタンで保存した SVG にはテキストを入れていません)' };
   try { return { ok: true, text: new TextDecoder('utf-8', { fatal: true }).decode(b64dec(m[1])) }; }
   catch { return { ok: false, error: '埋め込まれたテキストが壊れています' }; }
 }
@@ -2107,6 +2141,49 @@ const Edit = (() => {
   return { setAttr, setMopChecked, rename, addChild, addSibling, remove, addRealizes, removeRealizes, addAfter, removeAfter, setDays, setStatus, locate, keyOf, find };
 })();
 
+// ---- 図・表を 1 つずつ保存する・コピーする(仕様書 9 章)
+// 保存する SVG からは、画面の操作のための印(data-*)と、要素の説明(title。メモを含む)を除く(報告書に貼るため)
+const cleanSvg = (svg) => svg.replace(/<title>[\s\S]*?<\/title>/g, '').replace(/ data-[a-z-]+="[^"]*"/g, '');
+const unesc = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+// 図の題: 図の最初の文字(どのビューも、左上の題を最初に描く)
+function firstText(svg) {
+  const m = /<text[^>]*? y="([\d.]+)"[^>]*? font-size="([\d.]+)"[^>]*>([^<]*)<\/text>/.exec(svg);
+  return m ? { y: +m[1], fs: +m[2], label: unesc(m[3]) } : null;
+}
+const FIG_ID = { fbs: 'fbs', pbs: 'pbs', match: 'match', wbs: 'wbs', aoa: 'aoa', gantt: 'gantt', people: 'gantt-people', summary: 'summary' };
+// ビューの図と表。figs: [{ id, svg }]、tables: [{ name(ファイル名に使う題), header, rows, svg(題を入れない) }]、
+// anchors: 題の位置({ kind: 'fig', id | kind: 'table', index, label(題の文字), y(題の文字の基準線), fs })。画面で題の右にボタンを置くのに使う
+function pieces(r, view, opts = {}) {
+  const col = { anchors: [], tables: [] };
+  const o = render(r, view, { ...opts, collect: col });
+  if (!o.svg || !r.tasks.length && ['aoa', 'roles', 'gantt', 'people'].includes(view)) return { figs: [], tables: [], anchors: [] };
+  const figs = [];
+  const id = FIG_ID[view];
+  if (id) figs.push({ id, svg: cleanSvg(view === 'aoa' ? renderAOA(r, { part: 'diagram' }) : o.svg) });
+  const PAD = 20;
+  const tables = col.tables.map((t) => {
+    const [x0, y0, w, h] = t.box;
+    return { name: t.name, header: t.header, rows: t.rows, svg: cleanSvg(wrapSvg(w + 2 * PAD, h + 2 * PAD, `<g transform="translate(${PAD - x0},${PAD - y0})">${t.frag}</g>`)) };
+  });
+  return { figs, tables, anchors: anchorsOf(r, view, o.svg, col) };
+}
+// 題の位置(画面で題の右にボタンを置くため)。svg は render で描いた図、col は render に opts.collect で渡して集めたもの(描き直さずに求める)。
+// 図は { kind: 'fig', id, label, y, fs }、表は { kind: 'table', name(表の題。ファイル名に使う), label(画面の題の文字), y, fs }
+function anchorsOf(r, view, svg, col) {
+  const out = [];
+  if (!svg || !r.tasks.length && ['aoa', 'roles', 'gantt', 'people'].includes(view)) return out;
+  const id = FIG_ID[view];
+  const t = id && svg ? firstText(svg) : null; // アローダイアグラムの矢印の図の題は、ビューの図の最初の文字と同じ
+  if (t) out.push({ kind: 'fig', id, ...t });
+  for (const a of col.anchors) if (col.tables[a.index]) out.push({ kind: 'table', name: col.tables[a.index].name, label: a.label, y: a.y, fs: a.fs });
+  return out;
+}
+// 表をタブ区切りの文字にする。1 行目は見出し。セルの中のタブ・改行は空白 1 個にする。行の区切りは LF
+function tsv(t) {
+  const c = (v) => String(v).replace(/[\t\r\n]+/g, ' ');
+  return `${[t.header, ...t.rows].map((row) => row.map(c).join('\t')).join('\n')}\n`;
+}
+
 // ---- version:(最後にファイルとして保存した日。1 行目にだけ書ける。仕様書 3.3 節・4.1 節・9 章)
 const normText = (t) => t.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 // 保存するときに、内容が変わったかを比べるためのテキスト。1 行目の version: の日付の部分(注または行末までの値。前後の空白を除く)だけを除く
@@ -2129,13 +2206,13 @@ function setVersion(text0, date) {
   return text.slice(0, v.vStart) + sp + date + text.slice(v.vEnd);
 }
 
-return { parse, analyze, stripVersion, setVersion, misplacedVersion, render, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
+return { parse, analyze, stripVersion, setVersion, misplacedVersion, render, pieces, anchorsOf, tsv, printPages, printPortrait, peopleLoad, plannedByToday, workUntil, describe, toPrompt, embedSource, extractSource, VIEWS, STATUS, fmtDays, fmtDate, buildAOA, Edit };
 })();
 if (typeof module !== 'undefined') module.exports = Plan;
 /*CORE-END*/
 
 const SAMPLE_TEXT = "start: 2026-04-23\nend: 2026-05-14\n\nmembers:\n- 青木\n- 井上\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop: 終了が開始より前なら登録できない\n  - 場所の設定 mop*: 場所を 100 文字まで登録できる\n- 通知\n  - 登録確認メール mop: 予定の登録から 1 分以内にメールが届く\n  - リマインドメール mop: 予定の 30 分前にメールが届く\n- 予定の共有\n  - アカウント登録 mop*: メールアドレスとパスワードで登録できる\n  - 共有ユーザの選択 mop: 登録済みのユーザを 5 人まで選べる\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - カレンダ画面 realizes: 日時の設定, 場所の設定\n  - 予定登録画面 realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n- RestAPI\n  - 予定登録API realizes: 日時の設定, 場所の設定, 共有ユーザの選択\n  - ユーザ登録API realizes: アカウント登録\n  - 通知API realizes: 登録確認メール, リマインドメール\n- データベース\n  - テーブル realizes: 日時の設定, 場所の設定, アカウント登録\n  - スキーマ realizes: アカウント登録, 共有ユーザの選択\n\nWBS: カレンダーアプリ\n- 設計フェーズ\n  - 基本設計\n    - カレンダデザイン for: カレンダ画面 days: 1 by: 青木 status: done\n  - 詳細設計\n    - 予定登録CRUD用API URI for: 予定登録API days: 1 by: 井上 status: done\n    - ユーザ登録CRUD用API URI for: ユーザ登録API days: 1 by: 上田 status: done\n    - 通知用API URI for: 通知API days: 1 by: 青木 status: done\n    - データベーススキーム設計 for: スキーマ days: 1 by: 上田 status: done\n- 実装フェーズ\n  - 画面実装\n    - カレンダー画面の実装 for: カレンダ画面 days: 1 by: 青木 after: カレンダデザイン status: done\n  - API実装\n    - 予定登録CRUD用APIの実装 for: 予定登録API days: 7 by: 井上 after: 予定登録CRUD用API URI status: doing\n    - ユーザ登録CRUD用APIの実装 for: ユーザ登録API days: 3 by: 上田 after: ユーザ登録CRUD用API URI status: done\n    - 通知用APIの実装 for: 通知API days: 3 by: 青木 after: 通知用API URI status: blocked\n  - データベース実装\n    - データベースの実装 for: テーブル, スキーマ days: 2 by: 上田 after: データベーススキーム設計 status: done\n- テストフェーズ\n  - 単体テスト\n    - カレンダー画面テスト for: カレンダ画面 days: 1 by: 上田 after: カレンダー画面の実装\n  - 結合テスト\n    - 予定登録APIとデータベースの接続テスト for: 予定登録API, テーブル days: 3 by: 上田 after: 予定登録CRUD用APIの実装, データベースの実装\n    - ユーザ登録APIとデータベースの接続テスト for: ユーザ登録API, テーブル days: 2 by: 上田 after: ユーザ登録CRUD用APIの実装, データベースの実装\n    - 通知用APIとデータベースの接続テスト for: 通知API, テーブル days: 2 by: 青木 after: 通知用APIの実装, データベースの実装\n    - 予定入力画面と予定登録APIの接続テスト for: 予定登録画面, 予定登録API days: 3 by: 上田 after: カレンダー画面テスト, 予定登録APIとデータベースの接続テスト\n";
-const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>version:</td><td></td><td>最後にファイルとして保存した日(YYYY-MM-DD)。1 行目にだけ書ける。上書き保存・別名で保存のときにアプリが書く(なければ 1 行目に足す)。内容が変わっていなければ変えない。図と日程には使わない</td></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素がタスク</td></tr>\n</table>\n<p>節の順は自由です(<code>version:</code> は 1 行目にだけ)。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のためのタスクか</td></tr>\n<tr><td>days:</td><td>WBS</td><td>タスクの日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下のタスクすべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>タスクの状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端のタスクにだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のためのタスクがある(PBS があるとき)</li>\n<li>C5: タスクすべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早いタスクから順に置きます(同じなら書いた順)。休みの日はタスクが止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色はタスクの状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していないタスクに「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行でタスクを並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰のタスクが多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生のタスク・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先のタスクの矢印から後のタスクの矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、タスクを選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。「印刷 / PDF」で、全部の図を 1 ページに 1 つずつ印刷できます(印刷の画面で「PDF に保存」を選ぶと PDF になります)。大きすぎる図は、ページを分けて印刷します。保存すると、1 行目の <code>version:</code> がその日の日付になります(なければ足します)。<code>version:</code> の日付のほかに変更がなければ日付は変えず、上書き保存は書き込みません(別名で保存は、日付を変えずに書き込みます)。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
+const HELP_HTML = "<h2>書き方</h2>\n<p>1 つのテキストに、FBS・PBS・WBS・担当・日程を書きます。<code>-</code> の字下げで階層を作り、名前の後ろに <code>予約語: 値</code> を並べます。</p>\n<pre>start: 2026-04-23\nend: 2026-05-14\noff: sun, 2026-05-03..2026-05-06\n\nmembers:\n- 青木\n- 井上 off: wed, 2026-05-20\n- 上田\n\nFBS: カレンダーアプリ\n- 予定管理\n  - 日時の設定 mop: 登録から表示まで 1 秒以内\n\nPBS: カレンダーアプリ\n- 画面/UI\n  - 予定登録画面 realizes: 日時の設定\n\nWBS: カレンダーアプリ\n- 設計フェーズ by: 青木\n  - 画面設計 for: 予定登録画面 days: 1.5 review: 上田 note: 配色は大学の指定に合わせる\n  - 画面の実装 for: 予定登録画面 days: 3 after: 画面設計</pre>\n<h2>節</h2>\n<table>\n<tr><th>節</th><th>必須</th><th>書くもの</th></tr>\n<tr><td>version:</td><td></td><td>最後にファイルとして保存した日(YYYY-MM-DD)。1 行目にだけ書ける。上書き保存・別名で保存のときにアプリが書く(なければ 1 行目に足す)。内容が変わっていなければ変えない。図と日程には使わない</td></tr>\n<tr><td>start:</td><td>必須</td><td>1 日目の日付(YYYY-MM-DD)</td></tr>\n<tr><td>end:</td><td></td><td>期限。日程の終わりが超えたら警告</td></tr>\n<tr><td>off:</td><td></td><td>全員の休み。日付・範囲(日付..日付)・曜日(mon tue wed thu fri sat sun)をカンマで区切って書く。土日も作業日なので、休みにしたい曜日はここに書く</td></tr>\n<tr><td>members:</td><td>必須</td><td>次の行から担当者を「- 名前」で書く。担当者ごとの休み(他の仕事など)は <code>off:</code></td></tr>\n<tr><td>FBS: 根の名前</td><td></td><td>機能の木</td></tr>\n<tr><td>PBS: 根の名前</td><td></td><td>製品の木</td></tr>\n<tr><td>WBS: 根の名前</td><td>必須</td><td>作業の木。末端の要素がタスク</td></tr>\n</table>\n<p>節の順は自由です(<code>version:</code> は 1 行目にだけ)。各節は 1 回だけ書けます。</p>\n<h2>属性</h2>\n<table>\n<tr><th>属性</th><th>書ける節</th><th>意味</th></tr>\n<tr><td>mop:</td><td>FBS</td><td>MOP(テストの評価項目)。同じ行に何度でも書ける</td></tr>\n<tr><td>mop*:</td><td>FBS</td><td>チェック済み(試験を済ませた)の MOP。mop: と混ぜて書ける</td></tr>\n<tr><td>realizes:</td><td>PBS</td><td>その要素が実現する FBS の要素</td></tr>\n<tr><td>for:</td><td>WBS</td><td>どの PBS の要素のためのタスクか</td></tr>\n<tr><td>days:</td><td>WBS</td><td>タスクの日数(期間)。小数も可(3 桁まで)。by: が複数人でも期間は同じ</td></tr>\n<tr><td>by:</td><td>WBS</td><td>作成者。複数人可</td></tr>\n<tr><td>review:</td><td>WBS</td><td>確認者。複数人可。日程には影響しない</td></tr>\n<tr><td>after:</td><td>WBS</td><td>先に終わっている必要がある要素。途中の要素を書くと、その下のタスクすべての後</td></tr>\n<tr><td>status:</td><td>WBS</td><td>タスクの状態。todo(実行前)・doing(実行中)・done(完了)・blocked(問題発生)のどれか。書かなければ todo。末端のタスクにだけ書ける。日程の計算には使わない</td></tr>\n<tr><td>note:</td><td>すべて</td><td>メモ。図で要素を選ぶと下に出る</td></tr>\n<tr><td>off:</td><td>members</td><td>その担当者の休み(日付・範囲・曜日)</td></tr>\n</table>\n<ul>\n<li>複数の値はカンマで区切ります。</li>\n<li><code>by:</code>・<code>for:</code>・<code>review:</code> は親に書けば子が受け継ぎます。子に書けば置き換えです。</li>\n<li>参照は名前で書きます。兄弟どうしで同じ名前は使えません。同じ名前が別の親の下にあるときは <code>親::子</code> と書きます。</li>\n<li><code>//</code> から行末までは注です(行頭か空白の後の <code>//</code> だけ)。</li>\n</ul>\n<h2>書けないもの(構文エラー)</h2>\n<p>見出し(#)、番号付きのリスト、「* 」「+ 」のリスト、太字(** や __)、説明の文の行、コードブロック(```)、字下げや - の後の全角空白。名前に <code>,</code> と <code>::</code> は使えません。<code>**</code> と <code>__</code> は、太字のつもりでなくても書けません(<code>__init__.py</code> なども不可。全角の ＿ などに置き換えてください)。</p>\n<h2>検査(警告)</h2>\n<ul>\n<li>C1: FBS の各要素を実現する PBS の要素がある(FBS と PBS があるとき)</li>\n<li>C2: PBS の各要素が FBS の要素を実現している(FBS と PBS があるとき)</li>\n<li>C3: FBS の各要素に MOP がある(mop: か mop*: を 1 つでも書いたとき)</li>\n<li>C4: PBS の各要素のためのタスクがある(PBS があるとき)</li>\n<li>C5: タスクすべてに担当者(by:)がいる</li>\n</ul>\n<p>途中の要素は、自分か子孫に対応があればよいとみなします。根は検査しません。</p>\n<h2>日程の計算</h2>\n<ul>\n<li>クリティカルパスは、依存関係(after:)と日数だけから求めます。</li>\n<li>ガントチャートは、担当者の重なりと休みを避けて、最遅開始が早いタスクから順に置きます(同じなら書いた順)。休みの日はタスクが止まり、休み明けに続きます。</li>\n<li>2 つの長さ(クリティカルパスと、担当と休みを入れた日程)を並べて表示します。</li>\n<li>ガントチャートは、期間が約 3 年(1096 日)を超えるときは描きません(年の打ち間違いなどで図が大きくなりすぎるため)。</li>\n<li>ガントチャートの棒の色はタスクの状態です(実行前は白地に黒枠、実行中は青、完了は灰、問題発生はえんじ)。今日の線を引き、今日より前に終わる予定で完了していないタスクに「遅れ」と出します。クリティカルパスはアローダイアグラムで見ます。</li>\n<li>担当者別ガントチャートは、担当者 1 人につき 1 行でタスクを並べ、作成の日数と稼働率(作成の日数 ÷ その人が作業できる日数)で、誰のタスクが多いか少ないかを比べます。「作成の日数」「稼働率」の見出しを押すと並べ替わります(表示だけで、保存はしません)。</li>\n<li>サマリーは、進み具合・予定との比べ(今日までに終わる予定の日数と完了した日数)・遅れと問題発生のタスク・担当者ごとの状況・MOP・警告を 1 枚にまとめます。</li>\n</ul>\n<h2>図と表を保存する</h2>\n<p>各図・各表の題のすぐ右のボタンで、その図・表を 1 つずつ保存できます。表は「コピー」でタブ区切りの文字として写せます(表計算ソフトや Word の表にそのまま貼れます)。「SVG」「PNG」は画像で保存します。表には題を入れません(報告書では題を表の上に書くため)。「PDF」は、その図・表だけを同じ大きさの紙(余白なし)で印刷します。印刷の画面で「PDF に保存」を選ぶと、TeX にそのまま貼れる PDF になります。「PDF」と「印刷 / PDF」は Chrome・Edge で使ってください(Safari 18.1 以前は紙の大きさが指定どおりにならないことがあります)。</p>\n<h2>図から編集する</h2>\n<p>図の要素をクリックすると、下の編集パネルで名前や属性を書き換えたり、子・兄弟の追加や削除をしたりできます。対応の図では要素の間をドラッグすると <code>realizes:</code> が、アローダイアグラムでは先のタスクの矢印から後のタスクの矢印へドラッグすると <code>after:</code> が足されます。MOP の欄の中の改行は Shift+Enter で入れます(Enter は書き込み)。ガントチャートでは棒の右端をドラッグすると <code>days:</code> が変わり(離した位置までの、休みを除いた長さ)、タスクを選ぶと編集パネルの「状態」で <code>status:</code> を選べます。テスト項目(MOP)の表では、済の欄をクリックすると <code>mop:</code> と <code>mop*:</code>(チェック済み)が切り替わります。どの操作も左のテキストの書き換えで、Ctrl+Z で戻せます。テキストにエラーがある間は使えません。</p>\n<p class=\"small\">プロジェクト計画は単一 HTML で、データをどこにも送信しません。ネットワークなしで動きます。「新規」でテキストを空にします。編集中のテキストはこのブラウザにだけ自動で保持し、次に開くと続きから使えます。残したい計画は「上書き保存」(Ctrl+S)か「別名で保存」でファイルに保存してください。「印刷 / PDF」で、全部の図を 1 ページに 1 つずつ印刷できます(印刷の画面で「PDF に保存」を選ぶと PDF になります)。大きすぎる図は、ページを分けて印刷します。保存すると、1 行目の <code>version:</code> がその日の日付になります(なければ足します)。<code>version:</code> の日付のほかに変更がなければ日付は変えず、上書き保存は書き込みません(別名で保存は、日付を変えずに書き込みます)。Chrome・Edge では開いたファイルにそのまま上書きします。ファイル名の後ろの * は、保存していない変更があることを示します。</p>\n";
 // ---- 画面(DOM を使うのはここだけ)
 (() => {
 'use strict';
@@ -2203,6 +2280,7 @@ function analyze() {
     draw();
   } else if (canvasEl.querySelector('svg')) {
     viewEl.classList.add('stale');
+    canvasEl.querySelectorAll('.tbtns').forEach((x) => x.remove()); // 薄く出している図は保存しない(テキストと食い違うため)
     select(null); // エラーの間は、最後に描けた図を薄く出す
   } else {
     canvasEl.textContent = '';
@@ -2216,14 +2294,123 @@ function draw() {
   if (!r) return;
   let o;
   drawnToday = todayStr();
-  try { o = Plan.render(r, viewKindEl.value, { today: drawnToday, sort: peopleSort }); }
-  catch (e) { showInternal(`内部エラー(描画): ${e.message}`); return; }
+  const col = { anchors: [], tables: [] }; // 表と題の位置(題の右にボタンを置くため)
+  try { o = Plan.render(r, viewKindEl.value, { today: drawnToday, sort: peopleSort, collect: col }); }
+  catch (e) { canvasEl.querySelectorAll('.tbtns').forEach((x) => x.remove()); showInternal(`内部エラー(描画): ${e.message}`); return; }
   // 試験で、表示中の図をテキストから描き直して比べるために、並びを残しておく(data-sort とは別の名前にする)
   if (peopleSort) canvasEl.dataset.peopleSort = `${peopleSort.key}:${peopleSort.dir}`; else delete canvasEl.dataset.peopleSort;
   viewEl.classList.toggle('stale', r !== last);
-  if (o.svg) { canvasEl.innerHTML = o.svg; shownSvg = o.svg; }
+  if (o.svg) { canvasEl.innerHTML = o.svg; shownSvg = o.svg; if (r === last) addPieceButtons(Plan.anchorsOf(r, viewKindEl.value, o.svg, col)); }
   else { canvasEl.textContent = ''; canvasEl.append(el('div', 'empty', o.message)); shownSvg = null; }
   reselect();
+}
+
+// ---- 図・表を 1 つずつ保存する・コピーする(仕様書 9 章)
+// 各図・各表の題の文字のすぐ右に、表は「コピー」「SVG」「PNG」「PDF」、図は「SVG」「PNG」「PDF」を置く。
+// ボタンは図の上に重ねる画面の部品で、保存する画像や印刷には出ない。押しても図の上の操作(選ぶ・ドラッグ)は始めない
+const PIECE_TIP = {
+  copy: (n) => `「${n}」の表をタブ区切りの文字でコピーする(表計算ソフトや Word の表にそのまま貼れる)`,
+  svg: (n, t) => (t ? `「${n}」の表を SVG(ベクター形式)で保存する(題は入れない)` : 'この図を SVG(ベクター形式)で保存する'),
+  png: (n, t) => (t ? `「${n}」の表を PNG(2 倍の解像度)で保存する(題は入れない)` : 'この図を PNG(2 倍の解像度)で保存する'),
+  pdf: (n, t) => `${t ? `「${n}」の表` : 'この図'}だけを、同じ大きさの紙で印刷する(印刷の画面で「PDF に保存」を選ぶと、余白のない PDF になる。Chrome・Edge で使う)`,
+};
+// 表は題(ファイル名に使う題)で指す(描き直しで表の数が変わっても、押した表を取り違えないため)
+function addPieceButtons(anchors) {
+  for (const a of anchors) {
+    const isT = a.kind === 'table';
+    const name = isT ? a.name : a.id;
+    const box = el('span', 'tbtns');
+    for (const k of isT ? ['copy', 'svg', 'png', 'pdf'] : ['svg', 'png', 'pdf']) {
+      const b = el('button', null, k === 'copy' ? 'コピー' : k.toUpperCase());
+      b.dataset.piece = `${isT ? 'table' : 'fig'}:${name}|${k}`;
+      b.title = PIECE_TIP[k](name, isT);
+      b.addEventListener('click', () => pieceAction(isT ? 'table' : 'fig', name, k, b));
+      box.append(b);
+    }
+    // 下の図に押したことを伝えない(選択を外したり、ドラッグを始めたりしないため)
+    for (const ev of ['pointerdown', 'mousedown', 'click', 'dblclick']) box.addEventListener(ev, (e) => e.stopPropagation());
+    canvasEl.append(box);
+    placeBox(box, a);
+  }
+}
+function pieceAction(kind, ref, k, btn) {
+  // 描き直しが残っていれば先に描き直し、日付が変わっていれば今日の線と遅れの印を描き直してから保存する
+  if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
+  if (todayStr() !== drawnToday && last?.ok) draw();
+  if (!last?.ok || viewEl.classList.contains('stale')) { alert('保存できる図がありません(エラーを直してください)'); return; }
+  const view = viewKindEl.value;
+  let p;
+  try { p = Plan.pieces(last, view, { today: drawnToday, sort: peopleSort }); }
+  catch (e) { showInternal(`内部エラー(描画): ${e.message}`); return; }
+  // 描き直しでボタンが作り直されていれば、新しいボタンに「コピーしました」を出す
+  const cur = [...canvasEl.querySelectorAll('.tbtns button')].find((b) => b.dataset.piece === btn.dataset.piece) ?? btn;
+  if (kind === 'table') {
+    const t = p.tables.find((x) => x.name === ref);
+    if (!t) { alert(`「${ref}」の表は、今はありません(描き直したら表がなくなりました)`); return; }
+    if (k === 'copy') { copyText(Plan.tsv(t), cur); return; }
+    saveImage(t.svg, `${imgBase()}_${view}_${safeName(t.name)}`, k);
+    return;
+  }
+  const f = p.figs.find((x) => x.id === ref);
+  if (f) saveImage(f.svg, `${imgBase()}_${view}_${f.id}`, k);
+}
+// ボタンを題の文字に合わせる。文字の枠の中心はフォントによって上下にずれるので使わず、
+// 題とボタンの文字の基準線から見た目の中心を求めて(和文の字面の中心は、基準線から文字の大きさの約 0.38 倍上)、中心どうしをそろえる
+const GLYPH_MID = 0.38;
+function placeBox(box, a) {
+  const svg = canvasEl.querySelector('svg');
+  const texts = svg ? [...svg.querySelectorAll('text')].filter((t) => t.textContent === a.label) : [];
+  if (!texts.length) { box.remove(); return; }
+  const near = texts.reduce((q, t) => (Math.abs(+t.getAttribute('y') - a.y) < Math.abs(+q.getAttribute('y') - a.y) ? t : q));
+  const c = canvasEl.getBoundingClientRect(), sv = svg.getBoundingClientRect(), tr = near.getBoundingClientRect();
+  const titleMid = sv.top - c.top + +near.getAttribute('y') - GLYPH_MID * +near.getAttribute('font-size');
+  // ボタンの文字の基準線: ボタンの中に置いた大きさ 0 の印の下端
+  const btn = box.querySelector('button');
+  const mark = document.createElement('span');
+  mark.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+  btn.append(mark);
+  const bb = mark.getBoundingClientRect().bottom - box.getBoundingClientRect().top;
+  mark.remove();
+  box.style.left = `${tr.right - c.left + 6}px`;
+  box.style.top = `${titleMid + GLYPH_MID * parseFloat(getComputedStyle(btn).fontSize) - bb}px`;
+}
+// ファイル名に使えない文字と空白を「_」にする
+const safeName = (s) => s.replace(/[\\/:*?"<>|\s]+/g, '_');
+const imgBase = () => safeName(fileBase);
+// SVG に紙の大きさの指定を入れる(保存した SVG をブラウザで開いて印刷したときにも、同じ大きさの紙になるように)
+const withPage = (svg) => { const [, w, h] = /width="([\d.]+)" height="([\d.]+)"/.exec(svg); const i = svg.indexOf('>', svg.indexOf('<svg')); return `${svg.slice(0, i + 1)}<style>@page{size:${w}px ${h}px;margin:0}</style>${svg.slice(i + 1)}`; };
+// 図または表を 1 つだけ、同じ大きさの紙で印刷する(ブラウザの「PDF に保存」で、余白のない PDF になる)。アプリの中で PDF は作らない
+const uniqIds = (svg, pre) => svg.replace(/ id="([^"]+)"/g, ` id="${pre}$1"`).replace(/url\(#([^)]+)\)/g, `url(#${pre}$1)`);
+function printOne(svg, base) {
+  const [, w, h] = /width="([\d.]+)" height="([\d.]+)"/.exec(svg).map(Number);
+  const area = $('#printArea');
+  area.textContent = ''; area.classList.add('one');
+  const pg = el('div', 'page'); pg.style.width = `${w}px`; pg.style.height = `${h}px`; pg.innerHTML = uniqIds(svg, 'p1-'); area.append(pg);
+  let st = $('#pageOne');
+  if (!st) { st = document.createElement('style'); st.id = 'pageOne'; document.head.append(st); }
+  st.textContent = `@media print{@page{size:${w}px ${h}px;margin:0}}`;
+  const title = document.title; document.title = base; // 「PDF に保存」のファイル名の候補になる
+  try { window.print(); } finally { document.title = title; }
+}
+function saveImage(svg, base, kind) {
+  if (kind === 'pdf') { printOne(svg, base); return; }
+  if (kind === 'svg') { download(`${base}.svg`, new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${withPage(svg)}`], { type: 'image/svg+xml' })); return; }
+  const scale = 2;
+  const m = /width="(\d+)" height="(\d+)"/.exec(svg);
+  const w = +m[1], h = +m[2];
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  const big = () => alert('画像が大きすぎて PNG にできませんでした。SVG で保存してください');
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const c = document.createElement('canvas'); c.width = w * scale; c.height = h * scale;
+    const g = c.getContext('2d');
+    if (!g) { big(); return; }
+    g.scale(scale, scale); g.drawImage(img, 0, 0);
+    c.toBlob((b) => { if (b) download(`${base}.png`, b); else big(); }, 'image/png');
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert('PNG の作成に失敗しました'); };
+  img.src = url;
 }
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -2265,10 +2452,19 @@ function renderDiagnostics(diags) {
 function showInternal(m) { msgEl.prepend(el('div', 'err', m)); }
 
 async function copyText(text, btn) {
+  let ok = true;
   try { await navigator.clipboard.writeText(text); }
-  catch { const ta = document.createElement('textarea'); ta.value = text; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-  const t = btn.textContent; btn.textContent = 'コピーしました'; setTimeout(() => { btn.textContent = t; }, 1500);
+  catch {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.append(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+  }
+  if (btn.dataset.label === undefined) btn.dataset.label = btn.textContent;
+  clearTimeout(copyTimers.get(btn));
+  btn.textContent = ok ? 'コピーしました' : 'コピーできませんでした';
+  copyTimers.set(btn, setTimeout(() => { btn.textContent = btn.dataset.label; }, 2000));
 }
+const copyTimers = new WeakMap();
 
 // ---- 図の要素を選ぶ・図から編集する
 // テキストが正本。図での編集は、Plan.Edit がテキストの書き換えに直し、applyEdit がテキスト欄に書き込む。
@@ -2452,7 +2648,9 @@ document.addEventListener('pointerdown', (e) => {
   const so = canvasEl.contains(e.target) ? e.target.closest('[data-sort]') : null;
   let action = null;
   const fld = e.target.closest('#edit select, #edit input, #edit textarea');
-  if (so) action = { kind: 'sort', key: so.getAttribute('data-sort') };
+  const pb = e.target.closest('#canvas .tbtns button');
+  if (pb) action = { kind: 'piece', key: pb.dataset.piece };
+  else if (so) action = { kind: 'sort', key: so.getAttribute('data-sort') };
   else if (btn) action = { kind: 'button', label: btn.textContent };
   else if (fld) action = { kind: 'focus', label: fld.parentElement.firstChild.textContent };
   else if (g?.hasAttribute('data-handle')) { const n = Plan.Edit.find(last, g.getAttribute('data-handle')); if (n) action = { kind: 'node', key: Plan.Edit.keyOf(n) }; }
@@ -2477,6 +2675,7 @@ function replay() {
   pendingReplay = null;
   if (!a || a.kind === 'none' || !last?.ok) return;
   if (a.kind === 'sort') { toggleSort(a.key); return; }
+  if (a.kind === 'piece') { [...canvasEl.querySelectorAll('.tbtns button')].find((b) => b.dataset.piece === a.key)?.click(); return; }
   if (a.kind === 'focus') { const l = [...editEl.querySelectorAll('label')].find((x) => x.firstChild?.textContent === a.label); l?.querySelector('select,input,textarea')?.focus(); return; }
   if (a.kind === 'button') { const b = [...editEl.querySelectorAll('button')].find((x) => x.textContent === a.label && !x.disabled); b?.click(); return; }
   if (a.kind === 'rel') { const ids = a.keys.map((k) => Plan.Edit.locate(last, k)); if (ids.every(Boolean)) selectRel(ids.join('|')); return; }
@@ -2674,36 +2873,6 @@ viewKindEl.addEventListener('change', () => { selectedId = null; draw(); });
 
 // ---- 保存
 function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
-$('#exportImg').addEventListener('change', () => {
-  const v = $('#exportImg').value; $('#exportImg').value = '';
-  if (!v) return;
-  // 描き直しが残っていれば、先に描き直す(図と埋め込むテキストを食い違わせないため)
-  if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
-  // 日付が変わっていれば、今日の線と遅れの印を描き直してから保存する
-  if (todayStr() !== drawnToday && last?.ok) draw();
-  const svg = !viewEl.classList.contains('stale') && shownSvg;
-  if (!svg) { alert('保存できる図がありません(エラーを直すか、描けるビューを選んでください)'); return; }
-  const base = `${fileBase}_${viewKindEl.value}`;
-  if (v === 'svg') { download(`${base}.svg`, new Blob([Plan.embedSource(svg, srcEl.value)], { type: 'image/svg+xml' })); return; }
-  if (v === 'png') {
-    const scale = 2;
-    const m = /width="(\d+)" height="(\d+)"/.exec(svg);
-    const w = +m[1], h = +m[2];
-    const img = new Image();
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const c = document.createElement('canvas'); c.width = w * scale; c.height = h * scale;
-      const g = c.getContext('2d');
-      if (!g) { alert('図が大きすぎて PNG にできませんでした。SVG で保存してください'); return; }
-      g.scale(scale, scale); g.drawImage(img, 0, 0);
-      c.toBlob((b) => { if (b) download(`${base}.png`, b); else alert('図が大きすぎて PNG にできませんでした。SVG で保存してください'); }, 'image/png');
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); alert('PNG の作成に失敗しました'); };
-    img.src = url;
-  }
-});
-
 // ---- テキストのファイル: 新規・開く・上書き保存・別名で保存(仕様書 9 章。シンプルスライドと同じ作り)
 // Chrome・Edge はファイル操作機能で、開いたファイルにそのまま上書きする。ない場合はダウンロードで保存する
 const FS_OK = typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
@@ -2720,7 +2889,7 @@ const baseOf = (name) => name.replace(/\.[^.]*$/, '') || 'plan';
 
 function openFile(file, handle, handleP) {
   const isSvg = /\.svg$/i.test(file.name);
-  if (!isSvg && !/\.(plan|txt)$/i.test(file.name)) { alert(`${file.name} は開けません。開けるのは .plan(.txt)と、プロジェクト計画で保存した .svg です。`); return; }
+  if (!isSvg && !/\.(plan|txt)$/i.test(file.name)) { alert(`${file.name} は開けません。開けるのは .plan(.txt)と、版 0.30 までに「画像…」で保存した .svg です。`); return; }
   const r = new FileReader();
   r.onload = () => {
     let text;
@@ -2751,7 +2920,7 @@ window.addEventListener('drop', (e) => {
   // 上書きの先にするため、ファイルの扱いを受け取る(Chrome・Edge。ドロップの処理の中で呼ぶ必要がある)
   const it = e.dataTransfer.items?.[0];
   const hp = it && typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle() : null;
-  if (!/\.(plan|txt|svg)$/i.test(f.name)) { alert(`${f.name} は開けません。開けるのは .plan(.txt)と、プロジェクト計画で保存した .svg です。`); return; }
+  if (!/\.(plan|txt|svg)$/i.test(f.name)) { alert(`${f.name} は開けません。開けるのは .plan(.txt)と、版 0.30 までに「画像…」で保存した .svg です。`); return; }
   if (!okToDiscard()) return;
   openFile(f, null, hp);
 });
@@ -2911,7 +3080,8 @@ window.addEventListener('keydown', (e) => {
 // ---- 印刷 / PDF(仕様書 9 章): サマリー → 残りのビューを選択欄の順に、描けるものを 1 ページに 1 つずつ。図のほかには何も足さない
 function buildPrint() {
   const area = $('#printArea');
-  area.textContent = '';
+  area.textContent = ''; area.classList.remove('one');
+  { const st = $('#pageOne'); if (st) st.textContent = ''; } // 1 つだけの印刷の紙の指定を残さない
   if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
   if (!last?.ok) return 0;
   const ids = ['summary', ...Plan.VIEWS.map((v) => v.id).filter((id) => id !== 'summary')];
@@ -2924,7 +3094,7 @@ function buildPrint() {
       const page = el('div', 'page');
       page.dataset.view = id;
       if (Plan.printPortrait(id, i)) page.dataset.portrait = '1';
-      page.innerHTML = svg;
+      page.innerHTML = uniqIds(svg, `p${n + 1}-`); // 画面の図や、ほかのページと id が重ならないように
       area.append(page);
       n++;
     });
@@ -2936,7 +3106,7 @@ $('#btnPrint').addEventListener('click', () => {
   if (!buildPrint()) { alert('印刷できる図がありません(エラーを直してください)'); return; }
   window.print();
 });
-window.addEventListener('afterprint', () => { $('#printArea').textContent = ''; });
+window.addEventListener('afterprint', () => { const a = $('#printArea'); a.textContent = ''; a.classList.remove('one'); const st = $('#pageOne'); if (st) st.textContent = ''; });
 
 // ---- 上の帯のボタン
 $('#btnNew').addEventListener('click', () => { if (okToDiscard()) setText('', 'plan'); });
