@@ -20,7 +20,7 @@ let opening = true;
 let debounce = null;
 
 for (const v of Plan.VIEWS) viewKindEl.append(new Option(v.label, v.id));
-// 今日の日付(この端末の時刻。ガントチャートの今日の線と遅れの印に使う。仕様書 7.5 節)
+// 今日の日付(この端末の時刻。ガントチャートの今日の線と遅延の印に使う。仕様書 7.5 節)
 const todayStr = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 let drawnToday = todayStr();
 // 担当者別ガントチャートの並び(表示だけ。テキストにも自動保持にも残さない)。null は書いた順
@@ -52,7 +52,12 @@ srcEl.addEventListener('scroll', syncScroll);
 // ---- 解析と描画
 function analyze() {
   let r;
-  try { r = Plan.analyze(srcEl.value); }
+  // 保存していない変更がある間は、実行前のタスクについて、保存したときに付く日付(今日)を版の日付として日程を描く(保存すると version: が今日になるので、
+  // 保存の前後で実行前のタスクの日程が変わらないように。実行中・問題発生のタスクはテキストの version: のまま。仕様書 6.3 節・9 章)
+  const cur = srcEl.value;
+  const vd = savedText !== null && Plan.stripVersion(cur) === Plan.stripVersion(savedText) ? null : todayStr();
+  if (vd) canvasEl.dataset.version = vd; else delete canvasEl.dataset.version; // 検査で同じ日程を描くため
+  try { r = Plan.analyze(cur, { version: vd }); }
   catch (e) { showInternal(`内部エラー: ${e.message}`); return; }
   last = r;
   if (r.ok) {
@@ -119,7 +124,7 @@ function addPieceButtons(anchors) {
   }
 }
 function pieceAction(kind, ref, k, btn) {
-  // 描き直しが残っていれば先に描き直し、日付が変わっていれば今日の線と遅れの印を描き直してから保存する
+  // 描き直しが残っていれば先に描き直し、日付が変わっていれば今日の線と遅延の印を描き直してから保存する
   if (debounce !== null) { clearTimeout(debounce); debounce = null; analyze(); }
   if (todayStr() !== drawnToday && last?.ok) draw();
   if (!last?.ok || viewEl.classList.contains('stale')) { alert('保存できる図がありません(エラーを直してください)'); return; }
@@ -218,7 +223,7 @@ function renderDiagnostics(diags) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(d);
   }
-  const catName = (c) => ({ '検査 C1': '検査 C1: FBS に対応する PBS', '検査 C2': '検査 C2: PBS に対応する FBS', '検査 C3': '検査 C3: FBS の MOP', '検査 C4': '検査 C4: PBS のためのタスク', '検査 C5': '検査 C5: タスクの担当者' }[c] ?? c);
+  const catName = (c) => ({ '検査 C1': '検査 C1: FBS に対応する PBS', '検査 C2': '検査 C2: PBS に対応する FBS', '検査 C3': '検査 C3: FBS の MOP', '検査 C4': '検査 C4: PBS のためのタスク', '検査 C5': '検査 C5: タスクの作成者' }[c] ?? c);
   for (const [k, list] of groups) {
     const [lv, cat] = k.split('|');
     const cls = lv === 'error' ? 'err' : 'warn';
@@ -305,7 +310,7 @@ function select(id, byUser) {
   const head = el('div', 'row');
   head.append(el('span', 'kind', info.kind));
   if (info.qname) head.append(el('span', 'q', `修飾名: ${info.qname}`));
-  for (const [k, v] of info.items) if (!['note', 'MOP', '対象(for)', '作成', '確認', '先行', '実現する機能', '休み'].includes(k)) head.append(el('span', 'small', `${k}: ${v}`));
+  for (const [k, v] of info.items) if (!['note', 'MOP', '対象(for)', '作成者', '確認者', '先行', '実現する機能', '休み'].includes(k)) head.append(el('span', 'small', `${k}: ${v}`));
   editEl.append(head);
   buildForm(id);
   editEl.classList.add('on');
@@ -385,24 +390,24 @@ function buildForm(id) {
     at('for', '対象(for)', 'PBS の要素の名前, …');
     if (n.parent && !n.children.length) {
       at('days', '日数(days)', '1');
-      // 状態は 4 択。選ぶとすぐ書き込む(書いていないタスクで「実行前」を選んだときは何も書き足さない)
-      const lab = el('label', null, '状態(status)');
+      // 進捗(status:)は 4 択。選ぶとすぐ書き込む(書いていないタスクで「実行前」を選んだときは何も書き足さない)
+      const lab = el('label', null, '進捗(status)');
       const sl = document.createElement('select');
       for (const [k, ja] of Object.entries(Plan.STATUS)) sl.append(new Option(`${ja}(${k})`, k));
       sl.value = n.status;
       sl.disabled = !can;
-      sl.addEventListener('change', () => { if (!applyEdit(E.setStatus(last, id, sl.value), { focusLabel: '状態(status)' })) sl.value = n.status; });
+      sl.addEventListener('change', () => { if (!applyEdit(E.setStatus(last, id, sl.value), { focusLabel: '進捗(status)' })) sl.value = n.status; });
       lab.append(sl);
       form.append(lab);
     }
-    at('by', '作成(by)', '担当者の名前, …');
-    at('review', '確認(review)', '担当者の名前, …');
+    at('by', '作成者(by)', 'メンバーの名前, …');
+    at('review', '確認者(review)', 'メンバーの名前, …');
     if (n.parent) at('after', '先行(after)', 'WBS の要素の名前, …');
     at('note', 'メモ(note)');
   }
   const btns = el('div', 'btns');
   const btn = (label, fn, title) => { const b = el('button', null, label); b.disabled = !can; if (title) b.title = title; b.addEventListener('click', fn); btns.append(b); };
-  if (n.isMember) btn('担当者を追加', () => applyEdit(E.addSibling(last, id)));
+  if (n.isMember) btn('メンバーを追加', () => applyEdit(E.addSibling(last, id)));
   else {
     btn('子を追加', () => applyEdit(E.addChild(last, id)), 'この要素の下に要素を足す');
     if (n.parent) btn('兄弟を追加', () => applyEdit(E.addSibling(last, id)), 'この要素の後ろに、同じ親の要素を足す');
@@ -895,7 +900,14 @@ window.addEventListener('afterprint', () => { const a = $('#printArea'); a.textC
 
 // ---- 上の帯のボタン
 $('#btnNew').addEventListener('click', () => { if (okToDiscard()) setText('', 'plan'); });
-$('#btnSample').addEventListener('click', () => { if (okToDiscard()) setText(SAMPLE_TEXT, 'sample'); });
+// 例の日付をずらす(仕様書 8 章)。例は EXAMPLE_TODAY を今日とみなして作ってあり、読み込んだ日が今日になるよう、すべての日付を同じ日数だけずらす(マイログ・プロジェクト分析と同じ)
+const EXAMPLE_TODAY = '2026-04-29';
+const dayNum = (s) => Math.round(Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000);
+const dayStr = (n) => new Date(n * 86400000).toISOString().slice(0, 10);
+function shiftExample(text, delta) {
+  return text.replace(/(^|[^\d-])(\d{4}-\d{2}-\d{2})(?![\d])/g, (m, pre, d) => { const n = dayNum(d); return Number.isNaN(n) || dayStr(n) !== d ? m : pre + dayStr(n + delta); });
+}
+$('#btnSample').addEventListener('click', () => { if (okToDiscard()) setText(shiftExample(SAMPLE_TEXT, dayNum(todayStr()) - dayNum(EXAMPLE_TODAY)), 'sample'); });
 $('#btnHelp').addEventListener('click', () => { const d = $('#dlgHelp'); d.innerHTML = HELP_HTML; d.showModal(); });
 document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (e) => { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close(); }));
 
@@ -908,7 +920,7 @@ document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (
   window.addEventListener('mousemove', (e) => { if (drag) left.style.width = `${Math.max(200, Math.min(window.innerWidth - 200, e.clientX))}px`; });
 })();
 
-// 日付が変わったら描き直す(今日の線と遅れの印のため)。書きかけの欄やドラッグがあるときは待つ
+// 日付が変わったら描き直す(今日の線と遅延の印のため)。書きかけの欄やドラッグがあるときは待つ
 // 図はガントチャートのときだけ描き直す。編集パネルは作り直すが、入力していた欄とカーソルの位置は戻す
 setInterval(() => {
   if (todayStr() === drawnToday || pendingField || drag || applying || debounce !== null || !last?.ok) return;

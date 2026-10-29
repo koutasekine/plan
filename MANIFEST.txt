@@ -1,15 +1,17 @@
-# plan 版 0.31: 図・表ごとの「コピー」「SVG」「PNG」「PDF」のボタンを追加。「画像…」(ビュー全体の保存)と SVG へのテキストの埋め込みをやめた(これまでの SVG は開ける)。引き継ぎ文書(docs/handoff_*.md)は zip に入れない(受け取りの 1 行でリポジトリからも消す)。全ファイル投入可。
-# トップ: index.html(アプリ本体。これ 1 つで動く)・LICENSE・README.md。dev/(開発用。index.html はこれを読まない)・docs/(仕様書 版 0.31・AI 用のプロンプト)・test/(検査)
+# プロジェクト計画 v0.41(仕様書 版 0.40)。リポジトリのルートに展開する。全ファイル投入可。
+# 変更: README・書き方(使い方)に「ほかのアプリとの関係」の節を足した(計画書の要・不要、組み合わせの例。組み合わせ方はプロジェクトを運営する人が決める)。仕様書 1.2 節にも同じ関係を書いた。コードの変更なし
+# 検査の期待値の変更: なし
+99c4783f56815134b9f9ceaf50a23b66  CNAME
 5ec64f26876e09835b1e5e225c805086  LICENSE
-9b941aff49e17016095a4d8603b5045c  README.md
+6a06128e258eddc93041f5cca75d70a2  README.md
 4445eb5f963fcca42c4504b7ddf29a74  dev/build.py
-80d7dfac7d725305a8343571df57e331  dev/core.js
-64fdac8d90963d60e149fb6d422d6c0d  dev/help.html
-36992c076821da00a075fa70d12b6c87  dev/ui.js
-11826c0d863423276f28d630743bab88  docs/prompt_for_ai.md
-641fdd7154f832f9ba3f255c28469c04  docs/spec.md
-046485926dd309578bf1d73d64c89803  index.html
-0d7c533cc8754b6b48a30eaca7a46b1e  test/core_test.cjs
+2cfb2f3e65ac56f02435e821f147e7c4  dev/core.js
+bc237b64ef862f48c0cabd91d8966758  dev/help.html
+9be27db9dcf40f60b99751573b452225  dev/ui.js
+6e13abdab37369ad3eb021ab048cf96d  docs/prompt_for_ai.md
+62ba942f4b16ec8ec6708b3bbf5973da  docs/spec.md
+4b54f63ca32406586bf4fcea593b9a54  index.html
+6aafdd3022f6029cdb1cbf8dce26f6f2  test/core_test.cjs
 434173cd56edce724e5331737225c78f  test/sample.plan
 bdbc8b744fb2ef82eca8aadbab775f19  test/slide_excerpt.plan
-b77b203f47b45233fb02e0a57ae13822  test/ui_edit_test.py
+998b58429063ff86e65fe91fb5065c39  test/ui_edit_test.py

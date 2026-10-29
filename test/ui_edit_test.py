@@ -14,9 +14,12 @@ async def main():
         await pg.goto('file://'+str((pathlib.Path(__file__).resolve().parent.parent / 'index.html')))
         await pg.click('#btnSample'); await pg.wait_for_timeout(400)
         orig = await pg.input_value('#src')
+        # 例の日付は、読み込んだ日が例の中の今日(2026-04-29)に当たるようにずらす(仕様書 8 章)。例の start: は今日の 6 日前
+        st = await pg.evaluate("() => { const d = new Date(); const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - 6 * 86400000); return t.toISOString().slice(0, 10); }")
+        check(orig.startswith(f'start: {st}\n') and orig.count('2026-04-23') == (1 if st == '2026-04-23' else 0), f'例の日付をずらす: {orig[:20]!r}')
         # 図がテキストと一致しているか(表示中の図 = いまのテキストから描いた図)
         async def same():
-            return await pg.evaluate("""() => { const r = Plan.analyze(document.querySelector('#src').value); if (!r.ok) return 'error';
+            return await pg.evaluate("""() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); if (!r.ok) return 'error';
               const d = new Date(), pd = (n) => String(n).padStart(2, '0'); const cs = document.querySelector('#canvas').dataset.peopleSort; const sort = cs ? { key: cs.split(':')[0], dir: cs.split(':')[1] } : null; const o = Plan.render(r, document.querySelector('#viewKind').value, { today: `${d.getFullYear()}-${pd(d.getMonth() + 1)}-${pd(d.getDate())}`, sort }); const t = document.createElement('div'); t.innerHTML = o.svg ?? '';
               const c = document.querySelector('#canvas').cloneNode(true); c.querySelectorAll('.tbtns').forEach(e => e.remove()); c.querySelectorAll('.selected').forEach(e => { e.classList.remove('selected'); if (!e.getAttribute('class')) e.removeAttribute('class'); }); return t.innerHTML === c.innerHTML; }""")
         async def undo_all():
@@ -26,7 +29,7 @@ async def main():
                 await pg.keyboard.press('Control+z'); await pg.wait_for_timeout(50)
             await pg.wait_for_timeout(400)
         async def click_task(name):
-            await pg.evaluate("(n) => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.nodes.find(x => x.name === n); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }", name)
+            await pg.evaluate("(n) => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.nodes.find(x => x.name === n); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }", name)
             await pg.wait_for_timeout(100)
         # 1. 日数の書き換え(WBS のビュー)
         await pg.select_option('#viewKind','wbs'); await pg.wait_for_timeout(200)
@@ -63,7 +66,7 @@ async def main():
         await pg.select_option('#viewKind','match'); await pg.wait_for_timeout(200)
         async def center(sel):
             bb = await pg.locator(sel).first.bounding_box(); return bb['x']+bb['width']/2, bb['y']+bb['height']/2
-        ids = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); return [r.nodes.find(x => x.name === '登録確認メール').id, r.nodes.find(x => x.name === 'ユーザ登録API').id]; }")
+        ids = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); return [r.nodes.find(x => x.name === '登録確認メール').id, r.nodes.find(x => x.name === 'ユーザ登録API').id]; }")
         x1,y1 = await center(f"#canvas [data-id='{ids[0]}'] rect"); x2,y2 = await center(f"#canvas [data-id='{ids[1]}'] rect")
         await pg.mouse.move(x1,y1); await pg.mouse.down(); await pg.mouse.move((x1+x2)/2,(y1+y2)/2, steps=5); await pg.mouse.move(x2,y2, steps=5); await pg.mouse.up(); await pg.wait_for_timeout(150)
         t = await pg.input_value('#src')
@@ -79,7 +82,7 @@ async def main():
             return await pg.evaluate("""(i) => { const p = document.querySelector(`#canvas svg > g[data-id='${i}'] path`); const L = p.getTotalLength(); const q = p.getPointAtLength(L * 0.5);
               const m = p.getScreenCTM(); return [q.x * m.a + q.y * m.c + m.e, q.x * m.b + q.y * m.d + m.f]; }""", i)
         await pg.select_option('#viewKind','aoa'); await pg.wait_for_timeout(200)
-        ids = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); return [r.nodes.find(x => x.name === '通知用API URI').id, r.nodes.find(x => x.name === 'ユーザ登録CRUD用APIの実装').id]; }")
+        ids = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); return [r.nodes.find(x => x.name === '通知用API URI').id, r.nodes.find(x => x.name === 'ユーザ登録CRUD用APIの実装').id]; }")
         x1,y1 = await onpath(ids[0]); x2,y2 = await onpath(ids[1])
         await pg.mouse.move(x1,y1); await pg.mouse.down(); await pg.mouse.move(x2,y2, steps=8); await pg.mouse.up(); await pg.wait_for_timeout(150)
         t = await pg.input_value('#src')
@@ -94,7 +97,7 @@ async def main():
         await undo_all(); check(await pg.input_value('#src') == orig, '依存の追加を Ctrl+Z で戻せる')
         # 6. 棒の端をドラッグして日数を変える(ガントチャート)
         await pg.select_option('#viewKind','gantt'); await pg.wait_for_timeout(200)
-        hid = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); return r.nodes.find(x => x.name === 'カレンダデザイン').id; }")
+        hid = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); return r.nodes.find(x => x.name === 'カレンダデザイン').id; }")
         bb = await pg.locator(f"#canvas [data-handle='{hid}']").bounding_box()
         x,y = bb['x']+bb['width']/2, bb['y']+bb['height']/2
         await pg.mouse.move(x,y); await pg.mouse.down(); await pg.mouse.move(x+48,y, steps=6); await pg.mouse.up(); await pg.wait_for_timeout(150)
@@ -142,7 +145,7 @@ async def main():
         inp = pg.locator('#edit label:has-text("日数") input')
         await inp.fill('5'); await inp.press('Tab'); await pg.wait_for_timeout(150)
         inside = await pg.evaluate("() => document.querySelector('#edit').contains(document.activeElement) && document.activeElement.closest('label')?.firstChild?.textContent")
-        check(inside == '状態(status)', f'Tab で書き込んだ後、次の欄に入力が移る: {inside}')
+        check(inside == '進捗(status)', f'Tab で書き込んだ後、次の欄に入力が移る: {inside}')
         await pg.keyboard.type('B'); await pg.wait_for_timeout(100)
         check('- a days: 5 by: A' in await pg.input_value('#src'), '続けて打っても名前は上書きされない')
         # 中 3: 削除の後、別の要素が選ばれない
@@ -165,7 +168,7 @@ async def main():
         await pick('a')
         inp = pg.locator('#edit label:has-text("名前") input')
         await inp.fill('a2')
-        bid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).nodes.find(x => x.name === 'b').id")
+        bid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }).nodes.find(x => x.name === 'b').id")
         bb = await pg.locator(f"#canvas [data-id='{bid}'] rect").first.bounding_box()
         await pg.mouse.click(bb['x']+bb['width']/2, bb['y']+bb['height']/2); await pg.wait_for_timeout(300)
         name_now = await pg.evaluate("() => document.querySelector('#edit label input')?.value")
@@ -177,7 +180,7 @@ async def main():
         await pg.click('#btnSample'); await pg.wait_for_timeout(400)
         orig2 = await pg.input_value('#src')
         await pg.select_option('#viewKind','gantt'); await pg.wait_for_timeout(200)
-        hid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).nodes.find(x => x.name === 'カレンダデザイン').id")
+        hid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }).nodes.find(x => x.name === 'カレンダデザイン').id")
         bb = await pg.locator(f"#canvas [data-handle='{hid}']").bounding_box()
         x,y = bb['x']+bb['width']/2, bb['y']+bb['height']/2
         await pg.mouse.move(x,y); await pg.mouse.down(); await pg.mouse.move(x+60,y, steps=5); await pg.keyboard.press('Escape'); await pg.mouse.up(); await pg.wait_for_timeout(150)
@@ -207,7 +210,7 @@ async def main():
         # 8. 状態の欄(ガントチャート)
         await pg.select_option('#viewKind','gantt'); await pg.wait_for_timeout(200)
         await click_task('カレンダー画面テスト')
-        sl = pg.locator('#edit label:has-text("状態") select')
+        sl = pg.locator('#edit label:has-text("進捗") select')
         opts = await sl.evaluate("s => [...s.options].map(o => o.text).join(' ')")
         check(opts == '実行前(todo) 実行中(doing) 完了(done) 問題発生(blocked)', f'状態の欄の選択肢: {opts}')
         check(await sl.input_value() == 'todo', '書いていないタスクの状態の欄は実行前')
@@ -219,7 +222,7 @@ async def main():
         await undo_all(); check(await pg.input_value('#src') == orig, '状態の書き足しを Ctrl+Z で戻せる')
         check(await same() is True, '状態を戻した後、図がテキストと一致')
         await click_task('通知用APIの実装')
-        sl = pg.locator('#edit label:has-text("状態") select')
+        sl = pg.locator('#edit label:has-text("進捗") select')
         check(await sl.input_value() == 'blocked', '書いてある状態が欄に出る')
         await sl.select_option('done'); await pg.wait_for_timeout(150)
         t = await pg.input_value('#src')
@@ -227,7 +230,7 @@ async def main():
         check(await same() is True, '状態の置き換えの直後、図がテキストと一致')
         await undo_all(); check(await pg.input_value('#src') == orig, '状態の置き換えを Ctrl+Z で戻せる')
         await click_task('カレンダー画面テスト')
-        sl = pg.locator('#edit label:has-text("状態") select')
+        sl = pg.locator('#edit label:has-text("進捗") select')
         await sl.select_option('doing'); await pg.wait_for_timeout(150)
         await sl.select_option('todo'); await pg.wait_for_timeout(150)
         check('after: カレンダー画面の実装 status: todo\n' in await pg.input_value('#src'), '書いてある状態を実行前にすると status: todo になる')
@@ -236,18 +239,18 @@ async def main():
         await click_task('カレンダー画面テスト')
         inp = pg.locator('#edit label:has-text("日数") input')
         await inp.fill('2')
-        await pg.locator('#edit label:has-text("状態") select').click(); await pg.wait_for_timeout(200)
+        await pg.locator('#edit label:has-text("進捗") select').click(); await pg.wait_for_timeout(200)
         check('カレンダー画面テスト for: カレンダ画面 days: 2 by:' in await pg.input_value('#src'), '書きかけの日数を書き込んだ')
         check(await pg.evaluate("() => document.activeElement?.tagName === 'SELECT'"), '書きかけを書き込んだ後、状態の欄に入力が移る')
         await pg.keyboard.press('Escape')
         await undo_all(); check(await pg.input_value('#src') == orig, '書きかけの書き込みを Ctrl+Z で戻せる')
-        # 今日の線は描いてある(例の日程より後なので範囲の外なら線はない)。遅れの印は完了でないタスクの数だけ
-        n_late = await pg.evaluate("() => document.querySelectorAll('#canvas text').length && [...document.querySelectorAll('#canvas g[data-id] text')].filter(t => t.textContent === '遅れ').length")
-        exp = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const d = new Date(); const dn = Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); return r.tasks.filter(t => t.status !== 'done' && dn > r.sched.start + t.d1).length; }")
+        # 遅れの印は、今日より前に終わる予定で完了でないタスクの数だけ
+        n_late = await pg.evaluate("() => document.querySelectorAll('#canvas text').length && [...document.querySelectorAll('#canvas g[data-id] text')].filter(t => t.textContent === '遅延').length")
+        exp = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const d = new Date(); const dn = Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); return r.tasks.filter(t => t.status !== 'done' && dn > r.sched.start + t.d1).length; }")
         check(n_late == exp, f'遅れの印の数 {n_late} / {exp}')
         # 10. テスト項目(MOP)の表: 済の欄で mop: と mop*: を切り替える
         await pg.select_option('#viewKind','mop'); await pg.wait_for_timeout(200)
-        box = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const n = r.bySec.FBS.find(x => x.name === '日時の設定'); return n.id; }")
+        box = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const n = r.bySec.FBS.find(x => x.name === '日時の設定'); return n.id; }")
         await pg.click(f"#canvas [data-mop='{box}|1']"); await pg.wait_for_timeout(150)
         t = await pg.input_value('#src')
         check('日時の設定 mop*: 開始と終了の日時を 1 分単位で登録できる mop*: 終了が開始より前なら登録できない\n' in t, '済の欄をクリックすると mop*: になる')
@@ -302,7 +305,7 @@ async def main():
         T11 = 'start: 2026-04-23\nmembers:\n- A\n- B\nFBS: F\n- a mop: x mop: y\n- b mop: z\nWBS: W\n- t days: 1 by: A\n'
         await load(T11)
         await pg.select_option('#viewKind','mop'); await pg.wait_for_timeout(200)
-        aid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).bySec.FBS.find(x => x.name === 'a').id")
+        aid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }).bySec.FBS.find(x => x.name === 'a').id")
         await click_task('a')
         inp = pg.locator('#edit label:has-text("名前") input')
         await inp.fill('b')
@@ -339,7 +342,7 @@ async def main():
         T3 = 'start: 2026-04-23\nmembers:\n- A\nFBS: F\n- f1\n- f2\nPBS: P\n- p1 realizes: f1\n- p2 realizes: f2\nWBS: W\n- t days: 1 by: A for: p1, p2\n'
         await load(T3)
         await pg.select_option('#viewKind','match'); await pg.wait_for_timeout(200)
-        rel = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const f = r.bySec.FBS.find(x => x.name === 'f2'), p = r.bySec.PBS.find(x => x.name === 'p2'); return p.id + '|' + f.id; }")
+        rel = await pg.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const f = r.bySec.FBS.find(x => x.name === 'f2'), p = r.bySec.PBS.find(x => x.name === 'p2'); return p.id + '|' + f.id; }")
         await pg.evaluate("(rel) => document.querySelector(`#canvas [data-rel='${rel}']`).dispatchEvent(new MouseEvent('click', {bubbles: true}))", rel); await pg.wait_for_timeout(100)
         await load(T3.replace('FBS: F\n- f1', 'FBS: F\n- f0\n- f1'))
         check('FBS「f2」― PBS「p2」' in await pg.inner_text('#edit'), '書き換えの後も同じ対応の線を選ぶ')
@@ -361,7 +364,7 @@ async def main():
         T9 = 'start: 2026-05-01\noff: sat, sun\nmembers:\n- A\nWBS: W\n- t days: 1 by: A\n- u days: 1 by: A after: t\n'
         await load(T9)
         await pg.select_option('#viewKind','gantt'); await pg.wait_for_timeout(200)
-        tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks[0].id")
+        tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }).tasks[0].id")
         await pg.click(f"#canvas [data-handle='{tid}']"); await pg.wait_for_timeout(150)
         check(await pg.evaluate("() => document.querySelector('#edit').classList.contains('on')") and '- t days: 1' in (await pg.inner_text('#edit') + '- t days: 1'), 'つまみをクリックすると選択が外れない')
         check(await pg.locator('#edit label:has-text("名前") input').input_value() == 't', 'つまみをクリックすると、そのタスクを選ぶ')
@@ -392,10 +395,10 @@ async def main():
         check(await names() == '上田,青木,井上', '稼働率の多い順')
         await pg.locator('#canvas [data-id^=m]').first.click(); await pg.wait_for_timeout(150)
         check(await pg.locator('#edit label:has-text("名前") input').input_value() == '上田', '担当者の欄を押すと担当者を選ぶ')
-        tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks.find(x => x.name === '予定登録CRUD用APIの実装').id")
+        tid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }).tasks.find(x => x.name === '予定登録CRUD用APIの実装').id")
         await pg.locator(f"#canvas g[data-id='{tid}'] rect").first.click(); await pg.wait_for_timeout(150)
         check(await pg.locator('#edit label:has-text("名前") input').input_value() == '予定登録CRUD用APIの実装', '棒を押すとタスクを選ぶ')
-        await pg.locator('#edit label:has-text("状態") select').select_option('done'); await pg.wait_for_timeout(200)
+        await pg.locator('#edit label:has-text("進捗") select').select_option('done'); await pg.wait_for_timeout(200)
         check(await names() == '上田,青木,井上' and await same() is True, '編集の後も並びを保ち、図がテキストと一致')
         await undo_all()
         await pg.reload(); await pg.wait_for_timeout(500)
@@ -405,10 +408,10 @@ async def main():
         await load(orig)
         await pg.select_option('#viewKind','summary'); await pg.wait_for_timeout(200)
         check(await same() is True and 'タスクの進み具合' in await pg.inner_html('#canvas'), 'サマリーを描く')
-        bid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value).tasks.find(x => x.status === 'blocked').id")
+        bid = await pg.evaluate("() => Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }).tasks.find(x => x.status === 'blocked').id")
         await pg.locator(f"#canvas g[data-id='{bid}'] rect").first.click(); await pg.wait_for_timeout(150)
         check(await pg.locator('#edit label:has-text("名前") input').input_value() == '通知用APIの実装', 'サマリーの行を押すとタスクを選ぶ')
-        await pg.locator('#edit label:has-text("状態") select').select_option('done'); await pg.wait_for_timeout(200)
+        await pg.locator('#edit label:has-text("進捗") select').select_option('done'); await pg.wait_for_timeout(200)
         check(await same() is True and not await pg.locator(f"#canvas g[data-id='{bid}']").count(), '状態を完了にすると、サマリーの遅れと問題発生の表から消える')
         await undo_all()
         # 書きかけの欄があるままファイルを置いても、新しい内容は変わらない
@@ -450,7 +453,7 @@ async def main():
         check(await pg.evaluate("() => !!document.querySelector('#canvas svg')"), '開き直したとき、図も描かれる')
         await pg.select_option('#viewKind','gantt'); await pg.wait_for_timeout(200)
         await click_task('カレンダー画面テスト')
-        await pg.locator('#edit label:has-text("状態") select').select_option('done'); await pg.wait_for_timeout(150)
+        await pg.locator('#edit label:has-text("進捗") select').select_option('done'); await pg.wait_for_timeout(150)
         await pg.reload(); await pg.wait_for_timeout(500)
         check('after: カレンダー画面の実装 status: done\n' in await pg.input_value('#src'), '図から編集した内容も保持される')
         await pg.click('#btnNew'); await pg.wait_for_timeout(200)
@@ -491,8 +494,8 @@ async def main():
         check(await pf.evaluate("() => window.__picks.join(',')") == 'open', '上書き保存では保存先を尋ねない')
         # 図からの編集でも * が付き、上書き保存で消える
         await pf.select_option('#viewKind','gantt'); await pf.wait_for_timeout(200)
-        await pf.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
-        await pf.locator('#edit label:has-text("状態") select').select_option('doing'); await pf.wait_for_timeout(200)
+        await pf.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+        await pf.locator('#edit label:has-text("進捗") select').select_option('doing'); await pf.wait_for_timeout(200)
         check(await name() == 'a.plan *', '図からの編集でも * が付く')
         await pf.click('#btnSave'); await pf.wait_for_timeout(200)
         check('status: doing' in await pf.evaluate("() => window.__files['a.plan']") and await name() == 'a.plan', '上書き保存ボタン')
@@ -538,7 +541,7 @@ async def main():
         await pf.evaluate("(t) => { window.__files['e.plan'] = t; window.__openName = 'e.plan'; window.__picks = []; window.__saveName = null; }", orig)
         await pf.click('#btnOpen'); await pf.wait_for_timeout(300)
         await pf.select_option('#viewKind','wbs'); await pf.wait_for_timeout(200)
-        await pf.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+        await pf.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
         await pf.wait_for_timeout(100)
         await pf.locator('#edit label:has-text("日数") input').fill('5')
         await pf.keyboard.press('Control+s'); await pf.wait_for_timeout(300)
@@ -713,14 +716,14 @@ async def main():
         await pv.click('#btnOpen'); await pv.wait_for_timeout(300)
         await pv.focus('#src'); await pv.keyboard.press('Control+End'); await pv.keyboard.type('// T'); await pv.wait_for_timeout(300)
         await pv.select_option('#viewKind','wbs'); await pv.wait_for_timeout(200)
-        await pv.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+        await pv.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
         await pv.wait_for_timeout(100)
         await pv.locator('#edit label:has-text("メモ") input, #edit label:has-text("メモ") textarea').first.focus()
         await pv.evaluate("() => { const f = document.activeElement; if (f.setSelectionRange) f.setSelectionRange(0, 0); }")
         await pv.keyboard.press('Control+s'); await pv.wait_for_timeout(300)
         check((await vsrc()).startswith(f'version: {today}\n') and await pv.evaluate("() => { const a = document.activeElement; return !!a && document.querySelector('#edit').contains(a) && a.closest('label')?.firstChild?.textContent === 'メモ(note)'; }"), 'version: パネルの欄にいるまま保存しても、その欄に戻る')
         # 2 回目のレビューの指摘
-        sel_task = "() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }"
+        sel_task = "() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }"
         async def open_old(name):
             await pv.evaluate("([n, t]) => { window.__files[n] = t; window.__openName = n; window.__picks = []; }", [name, 'version: 2025-01-01\n' + orig])
             await pv.click('#btnOpen'); await pv.wait_for_timeout(300)
@@ -864,7 +867,7 @@ async def main():
             await pg3.goto('file://'+str((pathlib.Path(__file__).resolve().parent.parent / 'index.html')))
             await pg3.click('#btnSample'); await pg3.wait_for_timeout(300)
             await pg3.select_option('#viewKind', view); await pg3.wait_for_timeout(200)
-            await pg3.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+            await pg3.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
             await pg3.wait_for_timeout(100)
             f = pg3.locator('#edit label:has-text("メモ") input')
             await f.focus(); await pg3.evaluate("() => { const a = document.activeElement; a.value = ''; a.setSelectionRange(0, 0); }")
@@ -908,8 +911,9 @@ async def main():
             out.push({ label: t.textContent, gap: b0.left - r.right, dy: (base - 0.38 * fsT) - (bb - 0.38 * fsB), btns: [...box.querySelectorAll('button')].map((x) => x.textContent).join(' ') });
           }
           return out; }"""
+        # サマリー: 例の日付は読み込んだ日に合わせてずらす(仕様書 8 章)ので、実行前のタスクを今日から置いても日程は end: に収まり、「検査の警告」の表は出ない
         want = {'fbs': 1, 'pbs': 1, 'match': 1, 'wbs': 1, 'aoa': 2, 'roles': 2, 'gantt': 1, 'people': 1, 'mop': 1, 'summary': 4}
-        tables = {'aoa': ['タスクの表'], 'roles': ['役割分担: カレンダーアプリ', '担当者ごとのまとめ'], 'mop': ['テスト項目(MOP): カレンダーアプリ'], 'summary': ['タスクの進み具合', '遅れと問題発生', '担当者ごとの状況']}
+        tables = {'aoa': ['タスクの表'], 'roles': ['役割分担: カレンダーアプリ', '担当者ごとのまとめ'], 'mop': ['テスト項目(MOP): カレンダーアプリ'], 'summary': ['タスクの進み具合', '遅延と問題発生', '担当者ごとの状況']}
         for v, n in want.items():
             await pq.select_option('#viewKind', v); await pq.wait_for_timeout(250)
             ps = await pq.evaluate(POS)
@@ -921,9 +925,9 @@ async def main():
         cp = pq.locator('#canvas .tbtns button[data-piece="table:役割分担|copy"]')
         await cp.click(); await pq.wait_for_timeout(200)
         clip = await pq.evaluate("() => navigator.clipboard.readText()")
-        exp = await pq.evaluate("() => Plan.tsv(Plan.pieces(Plan.analyze(document.querySelector('#src').value), 'roles').tables[0])")
+        exp = await pq.evaluate("() => Plan.tsv(Plan.pieces(Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }), 'roles').tables[0])")
         lines = clip.split('\n')
-        check(clip == exp and lines[0] == '第 1 層\t第 2 層\tタスク\t作成\t確認\t日数' and lines[1].startswith('1 設計フェーズ\t1.1 基本設計\t1.1.1 カレンダデザイン\t') and lines[2].startswith('1 設計フェーズ\t1.2 詳細設計\t') and '\r' not in clip, f'表のコピー: {lines[:3]}')
+        check(clip == exp and lines[0] == '第 1 層\t第 2 層\tタスク\t作成者\t確認者\t日数' and lines[1].startswith('1 設計フェーズ\t1.1 基本設計\t1.1.1 カレンダデザイン\t') and lines[2].startswith('1 設計フェーズ\t1.2 詳細設計\t') and '\r' not in clip, f'表のコピー: {lines[:3]}')
         check(await cp.text_content() == 'コピーしました', 'コピーの直後は「コピーしました」')
         await pq.wait_for_timeout(500); await cp.click(); await pq.wait_for_timeout(1700)
         check(await cp.text_content() == 'コピーしました', '続けて押すと、2 秒数え直す')
@@ -958,7 +962,7 @@ async def main():
         title0 = await pq.title()
         await pq.click('#canvas .tbtns button[data-piece="table:担当者ごとのまとめ|pdf"]'); await pq.wait_for_timeout(200)
         pr = await pq.evaluate("() => window.__printed[window.__printed.length - 1]")
-        sv = await pq.evaluate("() => Plan.pieces(Plan.analyze(document.querySelector('#src').value), 'roles').tables[1].svg")
+        sv = await pq.evaluate("() => Plan.pieces(Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }), 'roles').tables[1].svg")
         w1, h1 = [int(x) for x in re.search(r'width="(\d+)" height="(\d+)"', sv).groups()]
         check(pr['one'] and pr['title'] == 'sample_roles_担当者ごとのまとめ' and pr['page'] == f'@media print{{@page{{size:{w1}px {h1}px;margin:0}}}}' and await pq.title() == title0, f'PDF の印刷の指定: {pr}')
         pdf = await pq.pdf(prefer_css_page_size=True)
@@ -972,7 +976,7 @@ async def main():
         await pq.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
         # 押しても図の上の操作は始まらない(選んでいる要素はそのまま)
         await pq.select_option('#viewKind', 'gantt'); await pq.wait_for_timeout(250)
-        await pq.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+        await pq.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); const t = r.tasks.find(x => x.name === 'カレンダー画面テスト'); document.querySelector(`#canvas [data-id='${t.id}']`).dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
         await pq.wait_for_timeout(150)
         sel0 = await pq.evaluate("() => [document.querySelectorAll('#canvas .selected').length, document.querySelector('#edit label input')?.value]")
         b0 = pq.locator('#canvas .tbtns button[data-piece="fig:gantt|svg"]')
@@ -994,17 +998,18 @@ async def main():
         await pq.focus('#src'); await pq.keyboard.press('Control+End'); await pq.keyboard.type('\nこれは誤り'); await pq.wait_for_timeout(500)
         check(await pq.locator('#canvas .tbtns').count() == 0, 'エラーの間はボタンを置かない')
         # 描き直しで表の数が変わっても、押した表をコピー・保存する。描き直した後のボタンに「コピーしました」を出す
-        late = 'start: 2026-04-20\nmembers:\n- A\nWBS: R\n- t1 days: 2 by: A\n- t2 days: 1 status: done by: A\n'
+        # 表に出すタスクは問題発生にする(実行前のタスクは、保存していない間は今日から置かれて遅延にならないため。仕様書 6.3 節)
+        late = 'start: 2026-04-20\nmembers:\n- A\nWBS: R\n- t1 days: 2 by: A status: blocked\n- t2 days: 1 status: done by: A\n'
         await pq.evaluate("(t) => { const e = document.querySelector('#src'); e.value = t; e.dispatchEvent(new Event('input')); }", late); await pq.wait_for_timeout(400)
         await pq.select_option('#viewKind', 'summary'); await pq.wait_for_timeout(250)
-        has_late = await pq.locator('#canvas .tbtns button[data-piece="table:遅れと問題発生|copy"]').count()
-        # テキストで t1 を完了にし、描き直しの前(250 ms 以内)に押す。描き直すと遅れの表がなくなり、表の数が変わる
-        await pq.evaluate("() => { const e = document.querySelector('#src'); e.focus(); e.setSelectionRange(e.value.indexOf('by: A\\n- t2'), e.value.indexOf('by: A\\n- t2')); }")
-        await pq.keyboard.type('status: done ')
+        has_late = await pq.locator('#canvas .tbtns button[data-piece="table:遅延と問題発生|copy"]').count()
+        # テキストで t1 を完了にし、描き直しの前(250 ms 以内)に押す。描き直すと遅延と問題発生の表がなくなり、表の数が変わる
+        await pq.evaluate("() => { const e = document.querySelector('#src'); e.focus(); const i = e.value.indexOf('blocked'); e.setSelectionRange(i, i + 7); }")
+        await pq.keyboard.type('done')
         await pq.click('#canvas .tbtns button[data-piece="table:担当者ごとの状況|copy"]'); await pq.wait_for_timeout(200)
         clip = await pq.evaluate("() => navigator.clipboard.readText()")
         lbl = await pq.locator('#canvas .tbtns button[data-piece="table:担当者ごとの状況|copy"]').text_content()
-        check(has_late == 1 and clip.startswith('担当者\t実行前\t') and await pq.locator('#canvas .tbtns button[data-piece="table:遅れと問題発生|copy"]').count() == 0 and lbl == 'コピーしました', f'描き直しで表の数が変わっても、押した表をコピーし、「コピーしました」を出す: {clip[:20]!r} {lbl}')
+        check(has_late == 1 and clip.startswith('担当者\t実行前\t') and await pq.locator('#canvas .tbtns button[data-piece="table:遅延と問題発生|copy"]').count() == 0 and lbl == 'コピーしました', f'描き直しで表の数が変わっても、押した表をコピーし、「コピーしました」を出す: {clip[:20]!r} {lbl}')
         # 図の欄が狭くても、ボタンは折り返さず、題の文字と中心がそろう
         await pq.evaluate("() => { document.querySelector('#left').style.width = '700px'; document.querySelector('#left').style.flex = 'none'; }")
         await pq.set_viewport_size({'width': 1000, 'height': 800})
@@ -1036,6 +1041,19 @@ async def main():
             await pq.select_option('#viewKind', v); await pq.wait_for_timeout(250)
             fit[v] = await pq.evaluate("() => { const svg = document.querySelector('#canvas svg'), sr = svg.getBoundingClientRect(); const ts = [...document.querySelectorAll('#canvas .tbtns')].map((b) => b.getBoundingClientRect().left); return ts.length > 0 && [...svg.querySelectorAll('text')].every((t) => t.getBoundingClientRect().right <= sr.right + 0.5); }")
         check(all(fit.values()), f'題が図の幅に収まる: {fit}')
+        # 日程の版の日付(仕様書 6.3 節・9 章): 保存していない変更がある間は今日、開いたまま変えていないファイルは version: の日付
+        import datetime, tempfile, os
+        today = datetime.date.today().isoformat()
+        vt = 'version: 2026-01-10\nstart: 2026-01-05\nmembers:\n- A\nWBS: R\n- t1 days: 2 by: A\n'
+        fp = os.path.join(tempfile.mkdtemp(), 'v.plan'); open(fp, 'w', encoding='utf-8').write(vt)
+        pq.on('dialog', lambda d: asyncio.ensure_future(d.accept()))
+        await pq.set_input_files('#fileOpen', fp); await pq.wait_for_timeout(400)
+        t0 = await pq.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); return [document.querySelector('#canvas').dataset.version || null, r.sched.start + r.tasks[0].d0]; }")
+        await pq.focus('#src'); await pq.keyboard.press('Control+End'); await pq.keyboard.type('\n- t2 days: 1 by: A'); await pq.wait_for_timeout(400)
+        t1 = await pq.evaluate("() => { const r = Plan.analyze(document.querySelector('#src').value, { version: document.querySelector('#canvas').dataset.version || null }); return [document.querySelector('#canvas').dataset.version || null, r.sched.start + r.tasks[0].d0, Plan.parseDate ? null : null]; }")
+        tn = await pq.evaluate("(d) => { const p = d.split('-').map(Number); return Math.round(Date.UTC(p[0], p[1] - 1, p[2]) / 86400000); }", today)
+        tv = await pq.evaluate("() => Math.round(Date.UTC(2026, 0, 10) / 86400000)")
+        check(t0[0] is None and t0[1] == tv and t1[0] == today and t1[1] == max(tn, tv), f'開いたままのファイルは version: の日付から、変更した後は今日から実行前のタスクを置く({t0} → {t1})')
         await pq.close(); await cx.close()
         check(not errs, f'ページのエラー: {errs}')
         await b.close()
