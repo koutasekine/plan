@@ -1,16 +1,16 @@
-# プロジェクト計画 v0.42(仕様書 版 0.40。変更なし)。リポジトリのルートに展開する。全ファイル投入可。
-# 変更: README のシンプルスライドへのリンクを [文字](URL) の形にした(URL の後ろに続く文字がリンクに入っていた)。docs/prompt_for_ai.md の URL の前後に空白を入れた
+# プロジェクト計画 v0.43(仕様書 版 0.41)。リポジトリのルートに展開する。全ファイル投入可。
+# 変更: README・書き方(使い方)の「ほかのアプリとの関係」を一般の利用向けに書き直した。マイログは単体でも記録帳として使えること、プロジェクト分析は計画書だけ・マイログだけ・両方のどれでも読めることを書き、組み合わせの例を 6 つ(そのアプリが入るもの)にした。組み合わせ方は使う人が決める。仕様書 1.2 節も合わせた。コードの変更なし
 # 検査の期待値の変更: なし
 99c4783f56815134b9f9ceaf50a23b66  CNAME
 5ec64f26876e09835b1e5e225c805086  LICENSE
-0e194560fa4547d0873b03b4175ecfcf  README.md
+164fb2cb4df191ba964aa7c22118696a  README.md
 4445eb5f963fcca42c4504b7ddf29a74  dev/build.py
 2cfb2f3e65ac56f02435e821f147e7c4  dev/core.js
-bc237b64ef862f48c0cabd91d8966758  dev/help.html
+576371d36f4b75d1ddb55a156d528704  dev/help.html
 9be27db9dcf40f60b99751573b452225  dev/ui.js
 a3e183dd9aad7080e975aa85e5d01f28  docs/prompt_for_ai.md
-62ba942f4b16ec8ec6708b3bbf5973da  docs/spec.md
-4b54f63ca32406586bf4fcea593b9a54  index.html
+51c8491e214baebd5045c6e429c634b1  docs/spec.md
+34b2fbe60093102423ba3ac02537b38e  index.html
 6aafdd3022f6029cdb1cbf8dce26f6f2  test/core_test.cjs
 434173cd56edce724e5331737225c78f  test/sample.plan
 bdbc8b744fb2ef82eca8aadbab775f19  test/slide_excerpt.plan
