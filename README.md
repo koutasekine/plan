@@ -240,7 +240,7 @@ SVG を開いたときは、上書き保存で SVG を書き換えず、テキ�
 ## 報告書に載せる
 
 - TeX: 図・表の題の右の「PDF」で作った PDF を `\includegraphics[width=\linewidth]{sample_gantt_gantt.pdf}` のように読み込みます(余白がないので、そのまま貼れます)。PNG も使えます。
-- Word・スライド: 図・表の題の右の「SVG」か「PNG」で保存して貼ります。表は「コピー」で、Word の表として貼ることもできます。シンプルスライド(https://slide.sapp.jp)には SVG をそのまま貼れます。
+- Word・スライド: 図・表の題の右の「SVG」か「PNG」で保存して貼ります。表は「コピー」で、Word の表として貼ることもできます。[シンプルスライド](https://slide.sapp.jp)には SVG をそのまま貼れます。
 
 ## 動作環境
 
